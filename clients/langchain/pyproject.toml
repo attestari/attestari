@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "notari-langchain"
+version = "0.0.1"
+description = "LangChain integration for Notari — the auditable memory layer for AI agents."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+keywords = ["ai", "agents", "memory", "notari", "langchain"]
+dependencies = [
+  "notari>=0.0.1",
+  "langchain-core>=0.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/notari_langchain"]

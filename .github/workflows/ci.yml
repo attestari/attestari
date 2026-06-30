@@ -43,6 +43,11 @@ jobs:
       - name: Tests (in-memory + postgres + server)
         run: python -m pytest -q
 
+      - name: LangChain integration tests
+        run: |
+          pip install "langchain-core>=0.3"
+          python -m pytest clients/langchain/tests -q
+
       - name: Eval baseline (built-in dataset)
         run: python -m eval.harness --dataset builtin
 

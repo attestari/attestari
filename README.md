@@ -169,6 +169,10 @@ python -m notari.mcp        # exposes add_memory / search_memory / get_provenanc
 **From TypeScript:** see [`clients/ts`](clients/ts) (`@notari/client`) — a thin
 typed client mirroring the `Memory` surface over the REST API.
 
+**With LangChain:** see [`clients/langchain`](clients/langchain) (`notari-langchain`)
+— a `NotariRetriever` (recall facts with provenance) and `NotariChatMessageHistory`
+(drop-in memory for `RunnableWithMessageHistory`) for any chain or agent.
+
 **With real Claude extraction** (instead of the zero-dep deterministic extractor):
 ```bash
 pip install -e ".[anthropic]"
@@ -245,6 +249,7 @@ src/notari/mcp.py   the MCP server
 examples/           runnable demos — start with spike.py
 eval/               quality + retrieval-latency harness
 clients/ts/         the TypeScript SDK (@notari/client)
+clients/langchain/  the LangChain integration (notari-langchain)
 db/schema.sql       the Postgres bi-temporal schema
 docker-compose.yml  Postgres + pgvector
 ```
