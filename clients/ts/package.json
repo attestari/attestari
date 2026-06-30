@@ -1,0 +1,19 @@
+{
+  "name": "@notari/client",
+  "version": "0.0.1",
+  "description": "TypeScript client for the Notari memory engine REST API.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": ["ai", "agents", "memory", "notari"],
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  }
+}

@@ -1,0 +1,27 @@
+# Postgres + pgvector for the durable event store + projections.
+# `docker compose up` brings up a single Postgres with pgvector and applies
+# db/schema.sql on first boot. The zero-dependency spike does NOT need this — it
+# runs fully in-memory — but the schema is applied here so the data model is
+# exercised end-to-end against the PostgresEventStore.
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: notari
+      POSTGRES_PASSWORD: notari
+      POSTGRES_DB: notari
+    ports:
+      # Host port is configurable to avoid clashing with a local Postgres.
+      # e.g. NOTARI_PG_PORT=5433 docker compose up -d
+      - "${NOTARI_PG_PORT:-5432}:5432"
+    volumes:
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/000-schema.sql:ro
+      - notari_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notari -d notari"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  notari_pgdata:
