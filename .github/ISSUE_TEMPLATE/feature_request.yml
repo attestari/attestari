@@ -1,0 +1,59 @@
+name: Feature request
+description: Propose a capability, integration, or improvement.
+title: "[feat]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Notari is intentionally small at the core. The strongest proposals tend to
+        be **new adapters behind an existing port** (Extractor, EventStore,
+        Embedder, ProjectionBackend) — see [ARCHITECTURE.md](https://github.com/notarihq/notari/blob/main/ARCHITECTURE.md).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: The use case first — what are you trying to do that you can't today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: API shape, behaviour, or a sketch. Rough is fine.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Core engine (events / projection / retrieval)
+        - Postgres backend
+        - Deletion / crypto-shred
+        - Audit chain
+        - Extractors (LLM / deterministic)
+        - Embedders
+        - Server / console
+        - MCP
+        - Clients / SDKs / integrations
+        - Eval / benchmarks
+        - Docs
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: I searched existing issues and discussions.
+          required: true
+        - label: I'd be willing to open a PR for this.

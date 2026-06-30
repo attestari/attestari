@@ -1,0 +1,69 @@
+name: Bug report
+description: Something behaves incorrectly — wrong recall, a crash, a broken guarantee.
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! If this is a **security** issue (e.g. data
+        recoverable after `forget()`, or the audit chain can be altered without
+        `verify_audit()` catching it), please **don't** file it here — see
+        [SECURITY.md](https://github.com/notarihq/notari/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you observe, and how does it differ from what you expected?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: A minimal snippet or steps. The smaller and more self-contained, the faster we can fix it.
+      render: python
+      placeholder: |
+        from notari import Memory
+        mem = Memory()
+        mem.add("...", subject_id="alice")
+        print(mem.answer("...", subject_id="alice"))   # got X, expected Y
+    validations:
+      required: true
+
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Which engine?
+      options:
+        - In-memory — Memory()
+        - Postgres — Memory.postgres()
+        - REST server — uvicorn notari.server:app
+        - MCP server — python -m notari.mcp
+        - TypeScript SDK — @notari/client
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Output of `python -c "import notari; print(notari.__version__)"`, or the commit SHA.
+
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: "Python 3.11 / macOS 14 / psycopg 3.2 (if Postgres)"
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: I searched existing issues and this isn't a duplicate.
+          required: true
+        - label: I reproduced it on the latest `main`.
+        - label: If it's in the core engine, `python examples/spike.py` (zero-dep) also shows it.
