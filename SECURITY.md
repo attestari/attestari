@@ -8,7 +8,7 @@ tamper-evident audit chain), so we take reports seriously.
 **Please do not open a public issue for security vulnerabilities.**
 
 Instead, use **GitHub's private vulnerability reporting** ("Report a
-vulnerability" under the repo's Security tab), or email **security@notari.sh**.
+vulnerability" under the repo's Security tab), or email **notari.hq@gmail.com**.
 We aim to acknowledge within 72 hours and to coordinate a fix and disclosure
 timeline with you.
 

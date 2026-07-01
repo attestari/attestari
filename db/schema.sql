@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS audit_entry (
 -- ---------------------------------------------------------------------------
 
 -- Resolved entities. `aliases` records the surface forms merged into this node
--- ("Shobhit" / "the founder" / "S.A." -> one canonical id).
+-- ("Jane Doe" / "the founder" / "J.D." -> one canonical id).
 CREATE TABLE IF NOT EXISTS entity (
     canonical_id  TEXT PRIMARY KEY,
     entity_type   TEXT,

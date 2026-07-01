@@ -55,7 +55,10 @@ and the linkage breaks too. You cannot alter stored memory undetected.
 per-subject key. `forget()` destroys the key and issues a signed
 `DeletionCertificate`. The ciphertext row physically remains — but with no key it's
 AES-256-GCM noise, unrecoverable — while the audit proof *survives the erasure*.
-Right-to-be-forgotten and an immutable audit log, reconciled.
+Right-to-be-forgotten and an immutable audit log, reconciled. (A bare run proves
+logical erasure — certificate issued, reads gone, audit intact;
+`pip install "notari[crypto]"` upgrades it to cryptographic crypto-shred where the
+retained ciphertext is provably unrecoverable.)
 
 **3. Bi-temporal time-travel.** Correct a fact and the old value isn't overwritten
 — it's superseded. Ask "where did the user live *as of* 2022?" and get the answer
