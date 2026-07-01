@@ -47,10 +47,6 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/notari"]
 
-[tool.hatch.build.targets.sdist]
-# Keep GTM/marketing drafts out of the published source tarball.
-exclude = ["docs/launch-post.md"]
-
 [tool.ruff]
 line-length = 100
 src = ["src", "examples", "eval", "tests"]
