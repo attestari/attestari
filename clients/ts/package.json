@@ -8,10 +8,24 @@
   "files": ["dist", "src"],
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "keywords": ["ai", "agents", "memory", "notari"],
   "license": "Apache-2.0",
+  "author": "Notari",
+  "homepage": "https://github.com/notarihq/notari#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/notarihq/notari.git",
+    "directory": "clients/ts"
+  },
+  "bugs": {
+    "url": "https://github.com/notarihq/notari/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "typescript": "^5.4.0",
     "@types/node": "^20.0.0"

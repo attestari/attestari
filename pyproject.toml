@@ -8,15 +8,29 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "Notari contributors" }]
 keywords = ["ai", "agents", "memory", "knowledge-graph", "llm", "rag", "gdpr", "provenance"]
 classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
+
 # The core engine has ZERO required dependencies — the in-memory adapter,
 # deterministic extractor, and hash embedder let `examples/spike.py` and the
 # eval harness run anywhere with just the standard library. Production adapters
 # are opt-in extras below.
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/notarihq/notari"
+Repository = "https://github.com/notarihq/notari"
+Issues = "https://github.com/notarihq/notari/issues"
+Documentation = "https://github.com/notarihq/notari#readme"
 
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.40"]                       # AnthropicExtractor (Claude-powered fact extraction)
@@ -32,6 +46,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/notari"]
+
+[tool.hatch.build.targets.sdist]
+# Keep GTM/marketing drafts out of the published source tarball.
+exclude = ["docs/launch-post.md"]
 
 [tool.ruff]
 line-length = 100
