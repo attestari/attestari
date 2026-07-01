@@ -96,7 +96,7 @@ p95 ≈ 1 ms). The three guarantees above are provable today by running one scri
 Retrieval quality is an internal signal we keep measuring, not a leaderboard claim.
 Apache-2.0, self-hostable, zero-dependency core.
 
-**Try it:** `git clone …/notari && python examples/prove_the_moat.py`
+**Try it:** `git clone https://github.com/notarihq/notari && python examples/prove_the_moat.py`
 **Read the proof:** [docs/the-moat.md](the-moat.md) — threat model + honest boundaries.
 
 ---
