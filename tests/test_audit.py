@@ -39,6 +39,29 @@ def test_audit_detects_deletion() -> None:
     assert not mem.verify_audit().ok
 
 
+def test_deep_verify_detects_silent_content_edit() -> None:
+    from notari.events import FactAsserted
+
+    mem = _seed()
+    # Find a fact event and silently rewrite its object *in the log only*,
+    # leaving the audit chain untouched — the sneaky tamper.
+    log = mem.store._log
+    idx = next(i for i, e in enumerate(log) if isinstance(e, FactAsserted))
+    log[idx] = dataclasses.replace(log[idx], object="Pyongyang")
+
+    # Chain-only verify is fooled (it never re-derives content) — the gap.
+    assert mem.verify_audit().ok
+    # Deep verify re-derives the digest and catches it at the tampered seq.
+    deep = mem.verify_audit(deep=True)
+    assert not deep.ok
+    assert deep.broken_at == idx + 1  # seq is 1-based
+
+
+def test_deep_verify_ok_when_untampered() -> None:
+    mem = _seed()
+    assert mem.verify_audit(deep=True).ok
+
+
 def test_forget_appends_to_chain_and_stays_valid() -> None:
     mem = _seed()
     before = mem.verify_audit().entries

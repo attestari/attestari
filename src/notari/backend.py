@@ -71,5 +71,10 @@ class InMemoryProjectionBackend:
     def on_write(self) -> None:  # nothing to materialise
         pass
 
-    def on_forget(self, certificate: DeletionCertificate) -> None:  # fold already purges
-        pass
+    def on_forget(self, certificate: DeletionCertificate) -> None:
+        # The fold already purges the subject logically (via the SubjectForgotten
+        # tombstone). If the store supports crypto-shred, also destroy the DEK so
+        # the subject's ciphertext at rest becomes unrecoverable.
+        shred = getattr(self.store, "shred_subject", None)
+        if shred is not None:
+            shred(certificate.subject_id)

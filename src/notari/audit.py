@@ -112,3 +112,32 @@ def verify_entries(entries: list[AuditEntry]) -> AuditReport:
             return AuditReport(ok=False, entries=len(entries), head=prev, broken_at=e.seq)
         prev = e.entry_hash
     return AuditReport(ok=True, entries=len(entries), head=prev)
+
+
+def verify(events: list[Event], entries: list[AuditEntry]) -> AuditReport:
+    """Full verification: the chain links **and** that each stored event still
+    matches the content digest committed to the chain.
+
+    `verify_entries` alone proves the ledger wasn't reordered, truncated, or
+    edited — but a tamperer could also edit an *event's content* in place and
+    leave the (separate) audit chain untouched. This re-derives `digest(event)`
+    and compares it to the committed `payload_hash`, so a silent content edit is
+    caught at the exact seq. Detects a length mismatch (event inserted/removed
+    without a matching entry) too.
+
+    Note: this checks content that is *present*. A sanctioned crypto-shred
+    destroys content by design; verify chained-only (`verify_entries`) is what
+    survives erasure, and that is what `verify_audit()` uses by default.
+    """
+    report = verify_entries(entries)
+    if not report.ok:
+        return report
+    if len(events) != len(entries):
+        return AuditReport(
+            ok=False, entries=len(entries), head=report.head,
+            broken_at=min(len(events), len(entries)) + 1,
+        )
+    for ev, e in zip(events, entries):
+        if digest(ev)[2] != e.payload_hash:  # content no longer matches its commitment
+            return AuditReport(ok=False, entries=len(entries), head=report.head, broken_at=e.seq)
+    return report

@@ -7,7 +7,7 @@ user's data can be **provably deleted** with a signed certificate.
 
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![python](https://img.shields.io/badge/python-3.11%2B-blue)
-![tests](https://img.shields.io/badge/tests-39%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-44%20passing-brightgreen)
 ![deps](https://img.shields.io/badge/core-zero%20dependencies-brightgreen)
 
 ```python
@@ -139,7 +139,7 @@ cert   = mem.forget("alice")         # DeletionCertificate — provable erasure
 | `conflicts(*, subject_id=None)` | `list[dict]` | Conflicts resolved by predicate cardinality. |
 | `resolve_entities(names=None, *, auto=True)` | `ResolutionResult` | Merge duplicate entities (reversible). |
 | `forget(subject_id)` | `DeletionCertificate` | Crypto-shred a subject; return proof. |
-| `verify_audit()` | `AuditReport` | Verify the tamper-evident hash chain. |
+| `verify_audit(deep=False)` | `AuditReport` | Verify the tamper-evident hash chain; `deep=True` also catches silent edits to event content. |
 
 ## Run it for real
 
@@ -221,6 +221,22 @@ python examples/spike.py --llm anthropic
 
 ## Provable deletion + tamper-evident audit, in one demo
 
+Don't trust the bullet points — **break the properties and watch them get caught.**
+This runs with no database, no API key, no model download, and is self-verifying
+(every claim ends in an `assert`; it crashes if any property is false):
+
+```bash
+python examples/prove_the_moat.py   # tamper -> caught · crypto-shred -> unrecoverable · time-travel
+```
+
+It adversarially proves all three differentiators: a silently rewritten fact is
+**caught at the exact seq** by `verify_audit(deep=True)`; a crypto-shredded
+subject's ciphertext is **provably unrecoverable** while the audit proof survives;
+and a corrected fact is queryable in the past without erasing history. See
+[docs/the-moat.md](docs/the-moat.md) for the threat model and honest boundaries.
+
+For the full crypto-shred against a real encrypted Postgres row:
+
 ```bash
 NOTARI_DATABASE_URL=postgresql://notari:notari@localhost:5433/notari \
     python examples/audit_and_forget_demo.py   # audit -> trace -> forget -> PROVE
@@ -264,7 +280,7 @@ docker-compose.yml  Postgres + pgvector
 ## Status
 
 The engine and its differentiators — verifiable deletion, tamper-evident audit,
-bi-temporal provenance, Postgres-native retrieval — are **built and tested** (39
+bi-temporal provenance, Postgres-native retrieval — are **built and tested** (44
 tests; Postgres p95 ≈ 1 ms).
 
 ## License

@@ -12,7 +12,7 @@ import hashlib
 import uuid
 from datetime import datetime, timezone
 
-from .audit import AuditReport, verify_entries
+from .audit import AuditReport, verify, verify_entries
 from .backend import InMemoryProjectionBackend, ProjectionBackend
 from .embed import Embedder, HashEmbedder
 from .events import (
@@ -51,7 +51,9 @@ class Memory:
         predicates: PredicateRegistry | None = None,
         resolver: EntityResolver | None = None,
     ) -> None:
-        self.store: EventStore = store or InMemoryEventStore()
+        # NB: `store or ...` would discard a freshly-passed empty store, since
+        # InMemoryEventStore defines __len__ (an empty store is falsy). Check None.
+        self.store: EventStore = store if store is not None else InMemoryEventStore()
         self.extractor: Extractor = extractor or DeterministicExtractor()
         self.embedder: Embedder = embedder or HashEmbedder()
         self.backend: ProjectionBackend = backend or InMemoryProjectionBackend(
@@ -304,8 +306,18 @@ class Memory:
 
     # --- audit ---------------------------------------------------------- #
 
-    def verify_audit(self) -> AuditReport:
-        """Verify the tamper-evident hash chain over the event log."""
+    def verify_audit(self, *, deep: bool = False) -> AuditReport:
+        """Verify the tamper-evident hash chain over the event log.
+
+        `deep=True` also cross-checks that each stored event's content still
+        matches the digest committed to the chain — catching a silent in-place
+        edit of an event, not just tampering with the ledger. The default
+        (chain-only) is what survives a crypto-shred, since shredding removes
+        content by design; use `deep=True` to attest that live records are
+        unaltered.
+        """
+        if deep:
+            return verify(self.store.events(), self.store.audit_entries())
         return verify_entries(self.store.audit_entries())
 
     # --- internals ------------------------------------------------------ #

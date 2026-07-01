@@ -6,7 +6,7 @@ dependencies, or durably on Postgres. See LEARN.md for how it all fits together.
 
 from __future__ import annotations
 
-from .audit import AuditEntry, AuditReport
+from .audit import AuditEntry, AuditReport, verify, verify_entries
 from .backend import InMemoryProjectionBackend, ProjectionBackend
 from .crypto import EnvelopeCipher, NullCipher, cipher_from_env, generate_kek
 from .embed import Embedder, HashEmbedder, SentenceTransformerEmbedder, default_embedder
@@ -57,6 +57,8 @@ __all__ = [
     "generate_kek",
     "AuditEntry",
     "AuditReport",
+    "verify",
+    "verify_entries",
     "PredicateRegistry",
     "Cardinality",
     "default_registry",
