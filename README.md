@@ -232,7 +232,9 @@ python examples/prove_the_moat.py   # tamper -> caught · crypto-shred -> unreco
 It adversarially proves all three differentiators: a silently rewritten fact is
 **caught at the exact seq** by `verify_audit(deep=True)`; a crypto-shredded
 subject's ciphertext is **provably unrecoverable** while the audit proof survives;
-and a corrected fact is queryable in the past without erasing history. See
+and a corrected fact is queryable in the past without erasing history. (Runs on a
+bare clone; `pip install "notari[crypto]"` upgrades claim 2 from logical erasure to
+cryptographic crypto-shred.) See
 [docs/the-moat.md](docs/the-moat.md) for the threat model and honest boundaries.
 
 For the full crypto-shred against a real encrypted Postgres row:

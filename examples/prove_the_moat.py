@@ -83,49 +83,69 @@ def prove_tamper_evident() -> bool:
 # the immutable audit proof remains. Uses the SAME EnvelopeCipher the Postgres
 # store uses, so this is the real mechanism, not a mock.
 # --------------------------------------------------------------------------- #
+def _have_crypto() -> bool:
+    try:
+        import cryptography  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def prove_provable_deletion() -> bool:
     rule(2, "Provable deletion — crypto-shred, then fail to recover the content")
 
     # An append-only log can't truly 'forget' — the row physically remains. So
     # Notari encrypts each subject's PII under a per-subject key and, to forget a
-    # subject, DESTROYS that key. Here it's the real Memory engine with an
-    # encrypting in-memory store — no database, no env vars.
-    cipher = EnvelopeCipher(base64.b64decode(generate_kek()))
-    store = InMemoryEventStore(cipher=cipher)
-    mem = Memory(store=store)
+    # subject, DESTROYS that key. With the `crypto` extra we prove cryptographic
+    # unrecoverability directly; without it we still prove logical erasure +
+    # certificate + audit survival (the zero-dependency default).
+    if _have_crypto():
+        store = InMemoryEventStore(cipher=EnvelopeCipher(base64.b64decode(generate_kek())))
+        mem = Memory(store=store)
+    else:
+        kv("note", "cryptography not installed — proving logical deletion")
+        kv("", "pip install 'notari[crypto]' for cryptographic crypto-shred")
+        store = None
+        mem = Memory()
+
     mem.add("My name is Dana. I live in Delhi.", subject_id="u1", valid_from="2019-01-01")
     mem.add("I'm Ravi. I live in Chennai.", subject_id="u2", valid_from="2021-01-01")
 
-    raw = next(e.payload for e in store._log
-               if isinstance(e, EpisodeIngested) and e.scope.subject_id == "u1")
-    kv("PII at rest is ciphertext", raw[:40] + "…")
+    if store is not None:
+        raw = next(e.payload for e in store._log
+                   if isinstance(e, EpisodeIngested) and e.scope.subject_id == "u1")
+        kv("PII at rest is ciphertext", raw[:40] + "…")
+        assert "Delhi" not in raw and "Dana" not in raw
     kv("before forget: recall", mem.answer("where does the user live", subject_id="u1"))
-    assert "Delhi" not in raw and "Dana" not in raw
     assert mem.answer("where does the user live", subject_id="u1") == "Delhi"
 
-    # forget(): crypto-shred u1 and issue a signed certificate.
+    # forget(): destroy the subject and issue a signed certificate.
     cert = mem.forget("u1", requested_by="dpo@example.com")
     kv("deletion certificate", f"{cert.certificate_id[:8]} · {cert.facts_deleted} facts · "
        f"manifest {cert.manifest_hash[:12]}…")
-    kv("key destroyed", f"'u1' in keyring = {'u1' in store._keyring}")
 
-    # The ciphertext row physically remains, but with no key it is AES-256-GCM
-    # noise — unrecoverable. Reads return nothing; a bystander subject is intact.
-    still_there = next(e.payload for e in store._log
-                       if isinstance(e, EpisodeIngested) and e.scope.subject_id == "u1")
-    kv("row remains, unreadable", still_there[:40] + "…")
+    if store is not None:
+        # The ciphertext row physically remains, but with no key it is AES-256-GCM
+        # noise — unrecoverable.
+        still_there = next(e.payload for e in store._log
+                           if isinstance(e, EpisodeIngested) and e.scope.subject_id == "u1")
+        kv("key destroyed", f"'u1' in keyring = {'u1' in store._keyring}")
+        kv("row remains, unreadable", still_there[:40] + "…")
+        assert "u1" not in store._keyring and "Delhi" not in still_there
+
     kv("recall after forget (u1)", mem.answer("where does the user live", subject_id="u1"))
     kv("bystander u2 untouched", mem.answer("where does the user live", subject_id="u2"))
     survived = mem.verify_audit()
     kv("audit proof after forget", f"ok={survived.ok} (proof survives erasure)")
 
-    assert "u1" not in store._keyring and "Delhi" not in still_there
     assert mem.answer("where does the user live", subject_id="u1") is None
     assert mem.timeline(subject_id="u1") == []
     assert mem.answer("where does the user live", subject_id="u2") == "Chennai"
     assert survived.ok
 
-    print("   \033[32m✅ content is provably unrecoverable; the proof remains\033[0m")
+    claim = ("content is provably unrecoverable; the proof remains" if store is not None
+             else "subject erased from all reads + certificate + audit survives")
+    print(f"   \033[32m✅ {claim}\033[0m")
     return True
 
 
