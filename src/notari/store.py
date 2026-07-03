@@ -17,8 +17,8 @@ from __future__ import annotations
 import dataclasses
 from typing import Protocol, runtime_checkable
 
-from .audit import GENESIS, AuditEntry, digest, link
-from .crypto import EnvelopeCipher, NullCipher, cipher_from_env
+from .audit import GENESIS, AuditEntry, next_entry
+from .crypto import EnvelopeCipher, InMemoryKeyring, KeyManager, NullCipher, cipher_from_env
 from .events import EpisodeIngested, Event, FactAsserted
 
 
@@ -52,32 +52,16 @@ class InMemoryEventStore:
         self._audit: list[AuditEntry] = []
         # Encryption is opt-in: EnvelopeCipher when NOTARI_KEK is set, else NullCipher.
         self.cipher = cipher or cipher_from_env()
-        self._keyring: dict[str, bytes] = {}  # subject_id -> wrapped DEK (at rest)
-        self._dek: dict[str, bytes] = {}       # subject_id -> unwrapped DEK (cache)
+        # Key lifecycle is delegated to the shared KeyManager; only the resting
+        # place of the wrapped DEKs (a dict here, a table in Postgres) differs.
+        self._keyring = InMemoryKeyring()
+        self._keys = KeyManager(self.cipher, self._keyring)
 
     # --- crypto-shred key management ------------------------------------ #
 
-    def _dek_for(self, subject_id: str) -> bytes:
-        """Get (or create) the subject's data key, unwrapped."""
-        if subject_id in self._dek:
-            return self._dek[subject_id]
-        wrapped = self._keyring.get(subject_id)
-        dek = self.cipher.unwrap(wrapped) if wrapped is not None else self.cipher.new_dek()
-        if wrapped is None:
-            self._keyring[subject_id] = self.cipher.wrap(dek)
-        self._dek[subject_id] = dek
-        return dek
-
-    def _live_deks(self) -> dict[str, bytes]:
-        """All subjects whose DEK is intact (used to decrypt on read)."""
-        if not self.cipher.enabled:
-            return {}
-        return {sid: self.cipher.unwrap(w) for sid, w in self._keyring.items()}
-
     def shred_subject(self, subject_id: str) -> None:
         """Destroy the subject's DEK — their ciphertext becomes unrecoverable."""
-        self._keyring.pop(subject_id, None)
-        self._dek.pop(subject_id, None)
+        self._keys.shred(subject_id)
 
     # --- write path ----------------------------------------------------- #
 
@@ -89,33 +73,25 @@ class InMemoryEventStore:
         if self.cipher.enabled:
             if isinstance(event, EpisodeIngested) and event.scope.subject_id:
                 stored = dataclasses.replace(
-                    event, payload=self.cipher.encrypt(self._dek_for(event.scope.subject_id), event.payload)
+                    event, payload=self._keys.encrypt_for(event.scope.subject_id, event.payload)
                 )
             elif isinstance(event, FactAsserted) and event.scope.subject_id:
                 stored = dataclasses.replace(
-                    event, object=self.cipher.encrypt(self._dek_for(event.scope.subject_id), event.object)
+                    event, object=self._keys.encrypt_for(event.scope.subject_id, event.object)
                 )
         self._log.append(stored)
 
-        kind, ref, payload_hash = digest(event)  # digest the plaintext event
+        # Chain the plaintext event's digest (see audit.next_entry — shared with
+        # the Postgres adapter, so the two chains cannot diverge).
         prev = self._audit[-1].entry_hash if self._audit else GENESIS
-        self._audit.append(
-            AuditEntry(
-                seq=len(self._audit) + 1,
-                kind=kind,
-                ref=ref,
-                payload_hash=payload_hash,
-                prev_hash=prev,
-                entry_hash=link(prev, payload_hash),
-            )
-        )
+        self._audit.append(next_entry(prev, len(self._audit) + 1, event))
 
     def events(self) -> list[Event]:
         if not self.cipher.enabled:
             # Return a copy so callers can't mutate the log out from under us.
             return list(self._log)
 
-        deks = self._live_deks()
+        deks = self._keys.live_deks()
         out: list[Event] = []
         readable_episodes: set[str] = set()
         for ev in self._log:

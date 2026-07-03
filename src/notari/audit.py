@@ -104,6 +104,24 @@ def link(prev_hash: str, payload_hash: str) -> str:
     return _h(prev_hash + payload_hash)
 
 
+def next_entry(prev_hash: str, seq: int, event: Event) -> AuditEntry:
+    """The entry that commits `event` to the chain after `prev_hash`.
+
+    Single source of truth for how the chain is extended: every store adapter
+    (in-memory, Postgres) appends exactly this entry, so the guarantee cannot
+    drift between deployment modes.
+    """
+    kind, ref, payload_hash = digest(event)
+    return AuditEntry(
+        seq=seq,
+        kind=kind,
+        ref=ref,
+        payload_hash=payload_hash,
+        prev_hash=prev_hash,
+        entry_hash=link(prev_hash, payload_hash),
+    )
+
+
 def verify_entries(entries: list[AuditEntry]) -> AuditReport:
     """Walk the chain and confirm every link. Detects edit/insert/delete."""
     prev = GENESIS

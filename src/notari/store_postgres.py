@@ -18,8 +18,8 @@ from __future__ import annotations
 import os
 from datetime import datetime
 
-from .audit import GENESIS, AuditEntry, digest, link
-from .crypto import EnvelopeCipher, NullCipher, cipher_from_env
+from .audit import GENESIS, AuditEntry, next_entry
+from .crypto import EnvelopeCipher, KeyManager, NullCipher, cipher_from_env
 from .embed import Embedder
 from .events import (
     EntityMerged,
@@ -52,6 +52,32 @@ def _vec_literal(vec: list[float]) -> str:
     return "[" + ",".join(str(float(x)) for x in vec) + "]"
 
 
+class _PostgresKeyring:
+    """Keyring adapter over the `keyring` table (wrapped DEKs at rest)."""
+
+    def __init__(self, conn) -> None:
+        self._conn = conn
+
+    def get(self, subject_id: str) -> bytes | None:
+        row = self._conn.execute(
+            "SELECT wrapped_dek FROM keyring WHERE subject_id = %s", (subject_id,)
+        ).fetchone()
+        return bytes(row["wrapped_dek"]) if row is not None else None
+
+    def put(self, subject_id: str, wrapped_dek: bytes) -> None:
+        self._conn.execute(
+            "INSERT INTO keyring (subject_id, wrapped_dek) VALUES (%s, %s)",
+            (subject_id, wrapped_dek),
+        )
+
+    def delete(self, subject_id: str) -> None:
+        self._conn.execute("DELETE FROM keyring WHERE subject_id = %s", (subject_id,))
+
+    def all(self) -> dict[str, bytes]:
+        rows = self._conn.execute("SELECT subject_id, wrapped_dek FROM keyring").fetchall()
+        return {r["subject_id"]: bytes(r["wrapped_dek"]) for r in rows}
+
+
 class PostgresEventStore:
     """Durable, totally-ordered event log backed by Postgres."""
 
@@ -65,41 +91,15 @@ class PostgresEventStore:
         self._conn = psycopg.connect(self.dsn, autocommit=True, row_factory=dict_row)
         # Encryption is opt-in: EnvelopeCipher when NOTARI_KEK is set, else NullCipher.
         self.cipher = cipher or cipher_from_env()
-        self._dek: dict[str, bytes] = {}  # subject_id -> unwrapped DEK (per-process cache)
+        # Key lifecycle is delegated to the shared KeyManager; only the resting
+        # place of the wrapped DEKs (the keyring table) is adapter-specific.
+        self._keys = KeyManager(self.cipher, _PostgresKeyring(self._conn))
 
     # --- crypto-shred key management ------------------------------------ #
 
-    def _dek_for(self, subject_id: str) -> bytes:
-        """Get (or create + persist) the wrapped DEK for a subject, unwrapped."""
-        if subject_id in self._dek:
-            return self._dek[subject_id]
-        row = self._conn.execute(
-            "SELECT wrapped_dek FROM keyring WHERE subject_id = %s", (subject_id,)
-        ).fetchone()
-        if row is not None:
-            dek = self.cipher.unwrap(bytes(row["wrapped_dek"]))
-        else:
-            dek = self.cipher.new_dek()
-            self._conn.execute(
-                "INSERT INTO keyring (subject_id, wrapped_dek) VALUES (%s, %s)",
-                (subject_id, self.cipher.wrap(dek)),
-            )
-        self._dek[subject_id] = dek
-        return dek
-
-    def _live_deks(self) -> dict[str, bytes]:
-        """All subjects with an intact DEK (used to decrypt on read)."""
-        if not self.cipher.enabled:
-            return {}
-        out: dict[str, bytes] = {}
-        for row in self._conn.execute("SELECT subject_id, wrapped_dek FROM keyring").fetchall():
-            out[row["subject_id"]] = self.cipher.unwrap(bytes(row["wrapped_dek"]))
-        return out
-
     def shred_subject(self, subject_id: str) -> None:
         """Destroy the subject's DEK — their ciphertext becomes unrecoverable."""
-        self._conn.execute("DELETE FROM keyring WHERE subject_id = %s", (subject_id,))
-        self._dek.pop(subject_id, None)
+        self._keys.shred(subject_id)
 
     # --- write path ----------------------------------------------------- #
 
@@ -107,7 +107,7 @@ class PostgresEventStore:
         if isinstance(event, EpisodeIngested):
             payload = event.payload
             if self.cipher.enabled and event.scope.subject_id:
-                payload = self.cipher.encrypt(self._dek_for(event.scope.subject_id), payload)
+                payload = self._keys.encrypt_for(event.scope.subject_id, payload)
             self._conn.execute(
                 """INSERT INTO episode
                        (episode_id, content_hash, payload, source_ref,
@@ -129,7 +129,7 @@ class PostgresEventStore:
             lo, hi = event.char_span if event.char_span else (None, None)
             obj = event.object
             if self.cipher.enabled and event.scope.subject_id:
-                obj = self.cipher.encrypt(self._dek_for(event.scope.subject_id), obj)
+                obj = self._keys.encrypt_for(event.scope.subject_id, obj)
             self._conn.execute(
                 """INSERT INTO fact_event
                        (op, fact_id, subject, predicate, object, confidence,
@@ -179,15 +179,20 @@ class PostgresEventStore:
         self._append_audit(event)
 
     def _append_audit(self, event: Event) -> None:
-        kind, ref, payload_hash = digest(event)
+        # The chain extension itself comes from audit.next_entry — shared with the
+        # in-memory adapter, so the two chains cannot diverge. seq is written
+        # explicitly (not left to the bigserial) so the committed entry matches
+        # the helper's output exactly; a concurrent writer racing on the same prev
+        # now fails loudly on the seq PK instead of silently forking the chain.
         row = self._conn.execute(
-            "SELECT entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
+            "SELECT seq, entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
         ).fetchone()
         prev = row["entry_hash"] if row else GENESIS
+        entry = next_entry(prev, (row["seq"] + 1) if row else 1, event)
         self._conn.execute(
-            """INSERT INTO audit_entry (kind, ref, payload_hash, prev_hash, entry_hash)
-               VALUES (%s, %s, %s, %s, %s)""",
-            (kind, ref, payload_hash, prev, link(prev, payload_hash)),
+            """INSERT INTO audit_entry (seq, kind, ref, payload_hash, prev_hash, entry_hash)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            (entry.seq, entry.kind, entry.ref, entry.payload_hash, entry.prev_hash, entry.entry_hash),
         )
 
     def audit_entries(self) -> list[AuditEntry]:
@@ -210,7 +215,7 @@ class PostgresEventStore:
         out: list[Event] = []
         scope_by_episode: dict[str, Scope] = {}
         encrypted = self.cipher.enabled
-        deks = self._live_deks()  # {} when encryption is disabled
+        deks = self._keys.live_deks()  # {} when encryption is disabled
 
         episodes = self._conn.execute(
             "SELECT * FROM episode ORDER BY ingested_at, episode_id"
@@ -312,7 +317,7 @@ class PostgresEventStore:
         self._conn.execute(
             "TRUNCATE episode, fact_event, entity, edge, deletion_certificate, keyring, audit_entry CASCADE"
         )
-        self._dek.clear()
+        self._keys.reset_cache()
 
     def close(self) -> None:
         self._conn.close()
