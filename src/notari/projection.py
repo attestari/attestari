@@ -92,10 +92,22 @@ class Projection:
 
 
 class Projector:
-    """Folds events into a Projection. Pure function of (events, embedder)."""
+    """Folds events into a Projection. Pure function of (events, embedder).
+
+    Embeddings are memoized by fact text: a Projector is bound to one embedder,
+    so the cache can never go stale, and rebuild-on-write stops re-embedding the
+    whole graph on every write — the difference between microseconds and a full
+    model pass per rebuild once real embeddings are installed."""
 
     def __init__(self, embedder: Embedder) -> None:
         self.embedder = embedder
+        self._embed_cache: dict[str, list[float]] = {}
+
+    def _embedding(self, text: str) -> list[float]:
+        vec = self._embed_cache.get(text)
+        if vec is None:
+            vec = self._embed_cache[text] = self.embedder.embed(text)
+        return vec
 
     def build(self, events: list[Event]) -> Projection:
         episodes: dict[str, EpisodeIngested] = {}
@@ -123,7 +135,7 @@ class Projector:
                     char_span=ev.char_span,
                     subject_id=ev.scope.subject_id,
                     alive=ev.valid_to is None,
-                    embedding=self.embedder.embed(f"{ev.subject} {ev.predicate} {ev.object}"),
+                    embedding=self._embedding(f"{ev.subject} {ev.predicate} {ev.object}"),
                 )
                 entities.setdefault(ev.subject, Entity(canonical_id=ev.subject))
 

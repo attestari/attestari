@@ -103,6 +103,12 @@ Hybrid, with time built in ([retrieve.py](src/notari/retrieve.py)):
 3. **graph** — neighbours of matched entities;
 4. **temporal filter** — restrict to facts valid at the requested `as_of` instant.
 
+The channel weights follow the embedder: with the zero-dependency hash embedder
+retrieval stays keyword-led; a real embedding model (declared via the port's
+`semantic` flag) flips it semantic-led. Ordering is deterministic (exact ties
+prefer the earliest-established fact) and identical across the in-memory and
+Postgres backends.
+
 Every result carries its provenance, so a caller can always answer *why* a memory
 was returned. `Memory.answer()` is a thin convenience over `search()` that returns
 the single top object.

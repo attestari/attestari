@@ -62,6 +62,7 @@ class _CachedEmbedder:
     def __init__(self, inner) -> None:  # noqa: ANN001
         self.inner = inner
         self.dim = inner.dim
+        self.semantic = getattr(inner, "semantic", False)  # forward the honesty flag
         self._cache: dict[str, list[float]] = {}
 
     def embed(self, text: str) -> list[float]:

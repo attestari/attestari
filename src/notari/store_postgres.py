@@ -33,14 +33,9 @@ from .events import (
 )
 from .projection import Edge, Projection, Projector
 from .records import DeletionCertificate
-from .retrieve import SearchResult
+from .retrieve import SearchResult, weights_for
 
 _DEFAULT_DSN = "postgresql://notari:notari@localhost:5432/notari"
-
-# Hybrid-retrieval weights (mirror the in-memory retriever): keyword-led, with
-# semantic similarity as the tiebreak.
-_SEM_WEIGHT = 0.4
-_KW_WEIGHT = 0.6
 
 
 def _span(lo: int | None, hi: int | None) -> tuple[int, int] | None:
@@ -414,12 +409,16 @@ class PostgresProjectionBackend:
         as_of: datetime | None = None,
         limit: int = 5,
     ) -> list[SearchResult]:
+        # Same weighted blend + tie-breaks as the in-memory retriever (weights
+        # imported from retrieve.py — single source of truth), so a query ranks
+        # identically regardless of deployment mode.
+        sem_w, kw_w = weights_for(self.embedder)
         params: dict[str, object] = {
             "qvec": _vec_literal(self.embedder.embed(query)),
             "q": query,
             "limit": limit,
-            "sw": _SEM_WEIGHT,
-            "kw": _KW_WEIGHT,
+            "sem_w": sem_w,
+            "kw_w": kw_w,
         }
         where = []
         if as_of is not None:
@@ -446,9 +445,13 @@ class PostgresProjectionBackend:
                 FROM edge
                 WHERE {" AND ".join(where)}
             )
-            SELECT *, (%(sw)s * sem + %(kw)s * LEAST(kw * 10, 1.0)) AS score
+            -- LEAST(kw*10, 1) squashes ts_rank's small values into the same
+            -- 0..1 range as the in-memory overlap ratio before blending.
+            -- Ordering mirrors retrieve.search exactly: score desc, then
+            -- earliest-established (tx_from) wins exact ties, then fact_id.
+            SELECT *, (%(sem_w)s * sem + %(kw_w)s * LEAST(kw * 10, 1.0)) AS score
             FROM scored
-            ORDER BY kw DESC, score DESC
+            ORDER BY score DESC, tx_from ASC, fact_id
             LIMIT %(limit)s
         """
         rows = self._conn.execute(sql, params).fetchall()

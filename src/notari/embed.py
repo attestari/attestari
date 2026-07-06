@@ -19,6 +19,11 @@ _TOKEN = re.compile(r"[a-z0-9]+")
 
 @runtime_checkable
 class Embedder(Protocol):
+    """`dim` + `embed`. Optionally declare `semantic = True` (read via
+    `getattr`, default False) to tell retrieval the vectors carry real meaning —
+    scoring then leans on the semantic channel instead of keyword overlap.
+    Wrappers around an embedder should forward the attribute."""
+
     dim: int
 
     def embed(self, text: str) -> list[float]: ...
@@ -29,6 +34,8 @@ class HashEmbedder:
 
     Same tokens -> same direction, so semantically-overlapping strings land
     near each other under cosine similarity. Crude but deterministic."""
+
+    semantic = False  # lexical stand-in: retrieval should stay keyword-led
 
     def __init__(self, dim: int = 384) -> None:
         self.dim = dim
@@ -63,6 +70,8 @@ class SentenceTransformerEmbedder:
     `vector(384)` columns in db/schema.sql. Install with `notari[embeddings]`.
     Swap this in for production-quality retrieval; the architecture is unchanged.
     """
+
+    semantic = True  # real meaning: retrieval leans on the semantic channel
 
     def __init__(self, model_name: str = "all-MiniLM-L6-v2", dim: int = 384) -> None:
         from sentence_transformers import SentenceTransformer  # heavy, imported lazily
