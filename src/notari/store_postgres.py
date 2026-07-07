@@ -96,9 +96,58 @@ class PostgresEventStore:
         """Destroy the subject's DEK — their ciphertext becomes unrecoverable."""
         self._keys.shred(subject_id)
 
+    def erased_refs(self) -> set[str]:
+        """Ids of episodes/facts whose content was **sanctioned-erased**: the
+        subject's DEK is destroyed AND a `SubjectForgotten` tombstone is on the
+        log. Deep audit verification skips exactly these entries; a destroyed
+        key with no tombstone is deliberately NOT included, so a rogue key
+        deletion fails verification instead of hiding."""
+        if not self.cipher.enabled:
+            return set()
+        rows = self._conn.execute(
+            """WITH gone AS (
+                   SELECT DISTINCT f.subject AS sid FROM fact_event f
+                   WHERE f.op = 'subject_forgotten'
+                     AND NOT EXISTS (SELECT 1 FROM keyring k WHERE k.subject_id = f.subject)
+               )
+               SELECT e.episode_id::text AS ref
+               FROM episode e JOIN gone g ON e.subject_id = g.sid
+               UNION
+               SELECT f.fact_id::text AS ref
+               FROM fact_event f
+                   JOIN episode e ON f.source_episode = e.episode_id
+                   JOIN gone g ON e.subject_id = g.sid
+               WHERE f.op = 'asserted'"""
+        ).fetchall()
+        return {r["ref"] for r in rows}
+
     # --- write path ----------------------------------------------------- #
 
     def append(self, event: Event) -> None:
+        # One transaction per append: the event row and its audit entry commit
+        # atomically (a crash cannot leave the chain out of step with the log),
+        # and an advisory xact lock serialises concurrent appenders so two
+        # writers can never read the same prev_hash and fork the chain.
+        with self._conn.transaction():
+            self._conn.execute("SELECT pg_advisory_xact_lock(hashtext('notari.event_log'))")
+            row = self._conn.execute(
+                "SELECT seq, entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
+            ).fetchone()
+            prev = row["entry_hash"] if row else GENESIS
+            # The chain extension comes from audit.next_entry — shared with the
+            # in-memory adapter, so the two chains cannot diverge. The entry's
+            # seq is also stamped onto the event row (event_seq): one global
+            # append order across episode + fact_event, which events() reads
+            # back so deep verification sees the exact chained order.
+            entry = next_entry(prev, (row["seq"] + 1) if row else 1, event)
+            self._insert_event(event, entry.seq)
+            self._conn.execute(
+                """INSERT INTO audit_entry (seq, kind, ref, payload_hash, prev_hash, entry_hash)
+                   VALUES (%s, %s, %s, %s, %s, %s)""",
+                (entry.seq, entry.kind, entry.ref, entry.payload_hash, entry.prev_hash, entry.entry_hash),
+            )
+
+    def _insert_event(self, event: Event, event_seq: int) -> None:
         if isinstance(event, EpisodeIngested):
             payload = event.payload
             if self.cipher.enabled and event.scope.subject_id:
@@ -106,8 +155,8 @@ class PostgresEventStore:
             self._conn.execute(
                 """INSERT INTO episode
                        (episode_id, content_hash, payload, source_ref,
-                        subject_id, agent_id, session_id, org_id, ingested_at)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                        subject_id, agent_id, session_id, org_id, ingested_at, event_seq)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
                     event.episode_id,
                     event.content_hash,
@@ -118,6 +167,7 @@ class PostgresEventStore:
                     event.scope.session_id,
                     event.scope.org_id,
                     event.ingested_at,
+                    event_seq,
                 ),
             )
         elif isinstance(event, FactAsserted):
@@ -128,8 +178,9 @@ class PostgresEventStore:
             self._conn.execute(
                 """INSERT INTO fact_event
                        (op, fact_id, subject, predicate, object, confidence,
-                        valid_from, valid_to, source_episode, char_span_lo, char_span_hi, recorded_at)
-                   VALUES ('asserted', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                        valid_from, valid_to, source_episode, char_span_lo, char_span_hi,
+                        recorded_at, event_seq)
+                   VALUES ('asserted', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
                     event.fact_id,
                     event.subject,
@@ -142,53 +193,38 @@ class PostgresEventStore:
                     lo,
                     hi,
                     event.recorded_at,
+                    event_seq,
                 ),
             )
         elif isinstance(event, FactInvalidated):
             self._conn.execute(
-                """INSERT INTO fact_event (op, fact_id, reason, valid_to, superseded_by, recorded_at)
-                   VALUES ('invalidated', %s, %s, %s, %s, %s)""",
-                (event.fact_id, event.reason, event.valid_to, event.superseded_by, event.recorded_at),
+                """INSERT INTO fact_event
+                       (op, fact_id, reason, valid_to, superseded_by, recorded_at, event_seq)
+                   VALUES ('invalidated', %s, %s, %s, %s, %s, %s)""",
+                (event.fact_id, event.reason, event.valid_to, event.superseded_by,
+                 event.recorded_at, event_seq),
             )
         elif isinstance(event, EntityMerged):
             self._conn.execute(
-                """INSERT INTO fact_event (op, canonical_id, alias_id, reason, recorded_at)
-                   VALUES ('entity_merged', %s, %s, %s, %s)""",
-                (event.canonical_id, event.alias_id, event.evidence, event.recorded_at),
+                """INSERT INTO fact_event (op, canonical_id, alias_id, reason, recorded_at, event_seq)
+                   VALUES ('entity_merged', %s, %s, %s, %s, %s)""",
+                (event.canonical_id, event.alias_id, event.evidence, event.recorded_at, event_seq),
             )
         elif isinstance(event, EntityUnmerged):
             self._conn.execute(
-                """INSERT INTO fact_event (op, canonical_id, alias_id, recorded_at)
-                   VALUES ('entity_unmerged', %s, %s, %s)""",
-                (event.canonical_id, event.alias_id, event.recorded_at),
+                """INSERT INTO fact_event (op, canonical_id, alias_id, recorded_at, event_seq)
+                   VALUES ('entity_unmerged', %s, %s, %s, %s)""",
+                (event.canonical_id, event.alias_id, event.recorded_at, event_seq),
             )
         elif isinstance(event, SubjectForgotten):
             # Reuse the `subject` column to hold the forgotten subject id.
             self._conn.execute(
-                """INSERT INTO fact_event (op, subject, requested_by, recorded_at)
-                   VALUES ('subject_forgotten', %s, %s, %s)""",
-                (event.subject_id, event.requested_by, event.recorded_at),
+                """INSERT INTO fact_event (op, subject, requested_by, recorded_at, event_seq)
+                   VALUES ('subject_forgotten', %s, %s, %s, %s)""",
+                (event.subject_id, event.requested_by, event.recorded_at, event_seq),
             )
         else:  # pragma: no cover - defensive
             raise TypeError(f"unknown event type: {type(event)!r}")
-        self._append_audit(event)
-
-    def _append_audit(self, event: Event) -> None:
-        # The chain extension itself comes from audit.next_entry — shared with the
-        # in-memory adapter, so the two chains cannot diverge. seq is written
-        # explicitly (not left to the bigserial) so the committed entry matches
-        # the helper's output exactly; a concurrent writer racing on the same prev
-        # now fails loudly on the seq PK instead of silently forking the chain.
-        row = self._conn.execute(
-            "SELECT seq, entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
-        ).fetchone()
-        prev = row["entry_hash"] if row else GENESIS
-        entry = next_entry(prev, (row["seq"] + 1) if row else 1, event)
-        self._conn.execute(
-            """INSERT INTO audit_entry (seq, kind, ref, payload_hash, prev_hash, entry_hash)
-               VALUES (%s, %s, %s, %s, %s, %s)""",
-            (entry.seq, entry.kind, entry.ref, entry.payload_hash, entry.prev_hash, entry.entry_hash),
-        )
 
     def audit_entries(self) -> list[AuditEntry]:
         rows = self._conn.execute("SELECT * FROM audit_entry ORDER BY seq").fetchall()
@@ -207,13 +243,16 @@ class PostgresEventStore:
     # --- read path ------------------------------------------------------ #
 
     def events(self) -> list[Event]:
-        out: list[Event] = []
+        # Reconstruct in the exact append order the audit chain committed:
+        # event_seq (= the audit entry's seq) is a total order across the
+        # episode and fact_event tables, so deep verification aligns 1:1.
+        ordered: list[tuple[int, Event]] = []
         scope_by_episode: dict[str, Scope] = {}
         encrypted = self.cipher.enabled
         deks = self._keys.live_deks()  # {} when encryption is disabled
 
         episodes = self._conn.execute(
-            "SELECT * FROM episode ORDER BY ingested_at, episode_id"
+            "SELECT * FROM episode ORDER BY event_seq"
         ).fetchall()
         for row in episodes:
             subject_id = row["subject_id"]
@@ -230,20 +269,24 @@ class PostgresEventStore:
                 org_id=row["org_id"],
             )
             scope_by_episode[eid] = scope
-            out.append(
-                EpisodeIngested(
-                    episode_id=eid,
-                    content_hash=row["content_hash"],
-                    payload=payload,
-                    scope=scope,
-                    ingested_at=row["ingested_at"],
-                    source_ref=row["source_ref"],
+            ordered.append(
+                (
+                    row["event_seq"] or 0,
+                    EpisodeIngested(
+                        episode_id=eid,
+                        content_hash=row["content_hash"],
+                        payload=payload,
+                        scope=scope,
+                        ingested_at=row["ingested_at"],
+                        source_ref=row["source_ref"],
+                    ),
                 )
             )
 
-        facts = self._conn.execute("SELECT * FROM fact_event ORDER BY seq").fetchall()
+        facts = self._conn.execute("SELECT * FROM fact_event ORDER BY event_seq, seq").fetchall()
         for row in facts:
             op = row["op"]
+            eseq = row["event_seq"] or 0
             if op == "asserted":
                 src = str(row["source_episode"]) if row["source_episode"] else ""
                 obj = row["object"]
@@ -253,57 +296,73 @@ class PostgresEventStore:
                     sid = scope_by_episode[src].subject_id
                     if sid in deks:
                         obj = self.cipher.decrypt(deks[sid], obj)
-                out.append(
-                    FactAsserted(
-                        fact_id=str(row["fact_id"]),
-                        subject=row["subject"],
-                        predicate=row["predicate"],
-                        object=obj,
-                        source_episode_id=src,
-                        valid_from=row["valid_from"],
-                        valid_to=row["valid_to"],
-                        confidence=row["confidence"],
-                        char_span=_span(row["char_span_lo"], row["char_span_hi"]),
-                        scope=scope_by_episode.get(src, Scope()),
-                        recorded_at=row["recorded_at"],
+                ordered.append(
+                    (
+                        eseq,
+                        FactAsserted(
+                            fact_id=str(row["fact_id"]),
+                            subject=row["subject"],
+                            predicate=row["predicate"],
+                            object=obj,
+                            source_episode_id=src,
+                            valid_from=row["valid_from"],
+                            valid_to=row["valid_to"],
+                            confidence=row["confidence"],
+                            char_span=_span(row["char_span_lo"], row["char_span_hi"]),
+                            scope=scope_by_episode.get(src, Scope()),
+                            recorded_at=row["recorded_at"],
+                        ),
                     )
                 )
             elif op == "invalidated":
-                out.append(
-                    FactInvalidated(
-                        fact_id=str(row["fact_id"]),
-                        reason=row["reason"] or "",
-                        valid_to=row["valid_to"],
-                        superseded_by=str(row["superseded_by"]) if row["superseded_by"] else None,
-                        recorded_at=row["recorded_at"],
+                ordered.append(
+                    (
+                        eseq,
+                        FactInvalidated(
+                            fact_id=str(row["fact_id"]),
+                            reason=row["reason"] or "",
+                            valid_to=row["valid_to"],
+                            superseded_by=str(row["superseded_by"]) if row["superseded_by"] else None,
+                            recorded_at=row["recorded_at"],
+                        ),
                     )
                 )
             elif op == "entity_merged":
-                out.append(
-                    EntityMerged(
-                        canonical_id=row["canonical_id"],
-                        alias_id=row["alias_id"],
-                        evidence=row["reason"] or "",
-                        recorded_at=row["recorded_at"],
+                ordered.append(
+                    (
+                        eseq,
+                        EntityMerged(
+                            canonical_id=row["canonical_id"],
+                            alias_id=row["alias_id"],
+                            evidence=row["reason"] or "",
+                            recorded_at=row["recorded_at"],
+                        ),
                     )
                 )
             elif op == "entity_unmerged":
-                out.append(
-                    EntityUnmerged(
-                        canonical_id=row["canonical_id"],
-                        alias_id=row["alias_id"],
-                        recorded_at=row["recorded_at"],
+                ordered.append(
+                    (
+                        eseq,
+                        EntityUnmerged(
+                            canonical_id=row["canonical_id"],
+                            alias_id=row["alias_id"],
+                            recorded_at=row["recorded_at"],
+                        ),
                     )
                 )
             elif op == "subject_forgotten":
-                out.append(
-                    SubjectForgotten(
-                        subject_id=row["subject"],
-                        requested_by=row["requested_by"] or "system",
-                        recorded_at=row["recorded_at"],
+                ordered.append(
+                    (
+                        eseq,
+                        SubjectForgotten(
+                            subject_id=row["subject"],
+                            requested_by=row["requested_by"] or "system",
+                            recorded_at=row["recorded_at"],
+                        ),
                     )
                 )
-        return out
+        ordered.sort(key=lambda p: p[0])
+        return [ev for _, ev in ordered]
 
     # --- helpers -------------------------------------------------------- #
 

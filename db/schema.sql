@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS episode (
     agent_id      TEXT,
     session_id    TEXT,
     org_id        TEXT,
-    ingested_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    ingested_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    event_seq     BIGINT                           -- global append order (= audit_entry.seq)
 );
 CREATE INDEX IF NOT EXISTS episode_subject_idx ON episode (subject_id);
 
@@ -59,10 +60,19 @@ CREATE TABLE IF NOT EXISTS fact_event (
     reason         TEXT,                           -- why invalidated / forgotten / merged
     superseded_by  UUID,
     requested_by   TEXT,                           -- subject_forgotten: who asked
-    recorded_at    TIMESTAMPTZ NOT NULL DEFAULT now()   -- SYSTEM/transaction time
+    recorded_at    TIMESTAMPTZ NOT NULL DEFAULT now(),  -- SYSTEM/transaction time
+    event_seq      BIGINT                          -- global append order (= audit_entry.seq)
 );
 CREATE INDEX IF NOT EXISTS fact_event_fact_idx    ON fact_event (fact_id);
 CREATE INDEX IF NOT EXISTS fact_event_subject_idx ON fact_event (subject);
+
+-- Lightweight, idempotent migration for databases created before event_seq:
+-- the shared append order across episode + fact_event that lets events() be
+-- reconstructed in the exact order the audit chain committed.
+ALTER TABLE episode    ADD COLUMN IF NOT EXISTS event_seq BIGINT;
+ALTER TABLE fact_event ADD COLUMN IF NOT EXISTS event_seq BIGINT;
+CREATE INDEX IF NOT EXISTS episode_event_seq_idx    ON episode (event_seq);
+CREATE INDEX IF NOT EXISTS fact_event_event_seq_idx ON fact_event (event_seq);
 
 -- Deletion certificates: the proof retained AFTER a subject's data is destroyed.
 -- We keep the certificate (that erasure happened, by whom, how much) and shred

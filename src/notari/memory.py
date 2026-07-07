@@ -97,7 +97,10 @@ class Memory:
         scope = Scope(subject_id=subject_id, agent_id=agent_id, session_id=session_id, org_id=org_id)
         vfrom = _coerce_dt(valid_from) or utcnow()
 
-        episode_id = uuid.uuid4().hex
+        # Canonical (hyphenated) UUID strings: Postgres UUID columns normalise
+        # to this form on read, so ids round-trip byte-identically — required
+        # for the audit digests (which commit ids) to re-derive exactly.
+        episode_id = str(uuid.uuid4())
         self.store.append(
             EpisodeIngested(
                 episode_id=episode_id,
@@ -130,7 +133,7 @@ class Memory:
                         FactInvalidated(fact_id=prior[0], reason="superseded", valid_to=vfrom)
                     )
             # (multi-valued predicates simply coexist)
-            fact_id = uuid.uuid4().hex
+            fact_id = str(uuid.uuid4())
             self.store.append(
                 FactAsserted(
                     fact_id=fact_id,
@@ -290,7 +293,7 @@ class Memory:
         manifest_hash = hashlib.sha256("\n".join(ids).encode()).hexdigest()
 
         certificate = DeletionCertificate(
-            certificate_id=uuid.uuid4().hex,
+            certificate_id=str(uuid.uuid4()),
             subject_id=subject_id,
             requested_by=requested_by,
             episodes_deleted=len(episodes),
@@ -310,14 +313,19 @@ class Memory:
         """Verify the tamper-evident hash chain over the event log.
 
         `deep=True` also cross-checks that each stored event's content still
-        matches the digest committed to the chain — catching a silent in-place
-        edit of an event, not just tampering with the ledger. The default
-        (chain-only) is what survives a crypto-shred, since shredding removes
-        content by design; use `deep=True` to attest that live records are
-        unaltered.
+        matches the digest committed to the chain (every semantic field,
+        including provenance spans and scope) and re-hashes each readable
+        episode payload against its `content_hash` — catching silent in-place
+        edits, not just ledger tampering. Deep verification **survives
+        sanctioned crypto-shreds**: entries whose events were erased with a
+        destroyed key *and* a `SubjectForgotten` tombstone are skipped, while a
+        destroyed key without a tombstone (a rogue shred) fails at that seq.
+        The default (chain-only) needs no event content at all.
         """
         if deep:
-            return verify(self.store.events(), self.store.audit_entries())
+            erased_fn = getattr(self.store, "erased_refs", None)
+            erased = erased_fn() if callable(erased_fn) else frozenset()
+            return verify(self.store.events(), self.store.audit_entries(), erased=erased)
         return verify_entries(self.store.audit_entries())
 
     # --- internals ------------------------------------------------------ #

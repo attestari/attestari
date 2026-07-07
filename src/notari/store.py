@@ -19,7 +19,7 @@ from typing import Protocol, runtime_checkable
 
 from .audit import GENESIS, AuditEntry, next_entry
 from .crypto import EnvelopeCipher, InMemoryKeyring, KeyManager, NullCipher, cipher_from_env
-from .events import EpisodeIngested, Event, FactAsserted
+from .events import EpisodeIngested, Event, FactAsserted, SubjectForgotten
 
 
 @runtime_checkable
@@ -62,6 +62,24 @@ class InMemoryEventStore:
     def shred_subject(self, subject_id: str) -> None:
         """Destroy the subject's DEK — their ciphertext becomes unrecoverable."""
         self._keys.shred(subject_id)
+
+    def erased_refs(self) -> set[str]:
+        """Ids of episodes/facts whose content was **sanctioned-erased**: the
+        subject's DEK is destroyed AND a `SubjectForgotten` tombstone is on the
+        log. Deep audit verification skips exactly these entries; a destroyed
+        key with no tombstone is deliberately NOT included, so a rogue key
+        deletion fails verification instead of hiding."""
+        if not self.cipher.enabled:
+            return set()
+        tombstoned = {ev.subject_id for ev in self._log if isinstance(ev, SubjectForgotten)}
+        gone = {sid for sid in tombstoned if sid not in self._keyring}
+        out: set[str] = set()
+        for ev in self._log:
+            if isinstance(ev, EpisodeIngested) and ev.scope.subject_id in gone:
+                out.add(ev.episode_id)
+            elif isinstance(ev, FactAsserted) and ev.scope.subject_id in gone:
+                out.add(ev.fact_id)
+        return out
 
     # --- write path ----------------------------------------------------- #
 
