@@ -83,10 +83,22 @@ class AnthropicExtractor:
     Defaults to the most capable model (`claude-opus-4-8`). For high-volume
     extraction you may pass a cheaper tier explicitly, e.g.
     `AnthropicExtractor(model="claude-haiku-4-5")`.
+
+    Transient API failures (429 rate limits, 5xx/overloaded, connection drops)
+    are retried with exponential backoff, honouring `retry-after` when the API
+    sends one — an ingestion call must not drop a memory write because of a
+    momentary limit, and a long extraction run must not die at turn 95.
+    Non-transient errors (auth, invalid request) are raised immediately.
     """
 
-    def __init__(self, model: str = "claude-opus-4-8", client: object | None = None) -> None:
+    def __init__(
+        self,
+        model: str = "claude-opus-4-8",
+        client: object | None = None,
+        max_retries: int = 8,
+    ) -> None:
         self.model = model
+        self.max_retries = max_retries
         self._client = client
 
     def _ensure_client(self) -> object:
@@ -95,6 +107,36 @@ class AnthropicExtractor:
 
             self._client = anthropic.Anthropic()
         return self._client
+
+    def _parse_with_retry(self, client, **params):  # noqa: ANN001, ANN202
+        import random
+        import time
+
+        import anthropic
+
+        delay = 2.0
+        for attempt in range(self.max_retries + 1):
+            try:
+                return client.messages.parse(**params)  # type: ignore[attr-defined]
+            except anthropic.APIConnectionError:
+                if attempt == self.max_retries:
+                    raise
+                wait = delay
+            except anthropic.APIStatusError as err:
+                # Retry rate limits (429), conflicts/timeouts (408/409), and
+                # server-side failures (5xx incl. 529 overloaded); anything
+                # else (400 invalid request, 401 auth, ...) is not transient.
+                if err.status_code not in (408, 409, 429) and err.status_code < 500:
+                    raise
+                if attempt == self.max_retries:
+                    raise
+                headers = getattr(getattr(err, "response", None), "headers", None) or {}
+                try:
+                    wait = max(float(headers.get("retry-after")), 0.0)
+                except (TypeError, ValueError):
+                    wait = delay
+            time.sleep(wait + random.uniform(0, 0.5))
+            delay = min(delay * 2, 60.0)
 
     def extract(self, text: str, scope: Scope) -> list[ExtractedFact]:
         from pydantic import BaseModel  # ships with the anthropic SDK
@@ -112,7 +154,8 @@ class AnthropicExtractor:
         subject_id = scope.subject_id or "subject"
         # Structured outputs via messages.parse() — the validated, recommended
         # path. No temperature (removed on Opus 4.8); small bounded output.
-        resp = client.messages.parse(  # type: ignore[attr-defined]
+        resp = self._parse_with_retry(
+            client,
             model=self.model,
             max_tokens=2000,
             system=f"{_SYSTEM}\n\nThe subject id for first-person statements is: {subject_id}",

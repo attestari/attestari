@@ -255,7 +255,7 @@ makes vector search fast). *Concept: schema = the database's blueprint.*
 - **`locomo.py`** — the rough real-world benchmark slice (recall on a real
   conversation dataset).
 
-### Automated tests — `tests/` (59 tests)
+### Automated tests — `tests/` (63 tests)
 
 One file per feature: `test_spike.py` (core loop), `test_postgres.py`,
 `test_server.py`, `test_crypto.py` + `test_crypto_shred.py`, `test_audit.py`,

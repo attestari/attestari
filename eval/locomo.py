@@ -7,14 +7,18 @@ labels; sidesteps fuzzy answer-text matching.)
 
 Facts are extracted ONCE (a single, **paced** Claude pass) and cached to disk, so
 the embedder A/B (hash vs real embeddings) runs offline with no further API calls
-and no rate-limit risk.
+and no rate-limit risk. Extraction is **crash-safe**: progress checkpoints to a
+`.partial` cache after every turn (atomic replace), and an interrupted run
+resumes from it instead of restarting — combined with the extractor's built-in
+retry/backoff, a stray 429 costs seconds, not hours.
 
 Caveats: one conversation, turns capped for cost; retrieval recall != LOCOMO's
 official answer-accuracy (LLM-judge) protocol; adversarial (cat 5) skipped; only
 questions whose evidence is within the ingested turns are scored.
 
     set -a && source .env && set +a
-    python -m eval.locomo --max-sessions 8 --turn-cap 100 --sleep 1.2 --embedders hash,st
+    python -m eval.locomo --max-sessions 8 --turn-cap 100 --embedders hash,st
+    # --sleep defaults to 12s/call: ~5 RPM, matching low API tiers.
 """
 
 from __future__ import annotations
@@ -71,7 +75,22 @@ class _CachedEmbedder:
         return self._cache[text]
 
 
-def _extract(sample: dict, max_sessions: int, turn_cap: int, model: str, sleep: float) -> list[dict]:
+def _write_json(path: Path, data: object) -> None:
+    """Atomic write (tmp + replace): a kill mid-write can't corrupt the cache."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data))
+    tmp.replace(path)
+
+
+def _extract(
+    sample: dict,
+    max_sessions: int,
+    turn_cap: int,
+    model: str,
+    sleep: float,
+    partial: Path | None = None,
+    resume: list[dict] | None = None,
+) -> list[dict]:
     conv = sample["conversation"]
     extractor = AnthropicExtractor(model=model)
     sessions = sorted(
@@ -79,7 +98,8 @@ def _extract(sample: dict, max_sessions: int, turn_cap: int, model: str, sleep: 
         key=lambda k: int(k.split("_")[1]),
     )[:max_sessions]
 
-    out: list[dict] = []
+    out: list[dict] = list(resume or [])
+    done = len(out)  # turns already extracted by an interrupted run
     n = 0
     print(f"extracting up to {turn_cap} turns with {model} (paced {sleep}s/call)…")
     for si, skey in enumerate(sessions):
@@ -87,6 +107,9 @@ def _extract(sample: dict, max_sessions: int, turn_cap: int, model: str, sleep: 
         for turn in conv[skey]:
             if n >= turn_cap:
                 break
+            n += 1
+            if n <= done:
+                continue  # already in the partial cache — no API call, no sleep
             facts = extractor.extract(turn["text"], Scope(subject_id=turn["speaker"]))
             out.append({
                 "speaker": turn["speaker"],
@@ -99,7 +122,8 @@ def _extract(sample: dict, max_sessions: int, turn_cap: int, model: str, sleep: 
                     for f in facts
                 ],
             })
-            n += 1
+            if partial is not None:
+                _write_json(partial, out)  # checkpoint every turn (KBs; calls are ~12s apart)
             if n % 20 == 0:
                 print(f"  …{n} turns")
             time.sleep(sleep)  # pace to respect rate limits
@@ -114,9 +138,17 @@ def load_or_extract(sample: dict, args: argparse.Namespace) -> list[dict]:
     if cache.exists():
         print(f"using cached facts: {cache}")
         return json.loads(cache.read_text())
-    turns = _extract(sample, args.max_sessions, args.turn_cap, args.model, args.sleep)
     cache.parent.mkdir(parents=True, exist_ok=True)
-    cache.write_text(json.dumps(turns))
+    partial = cache.with_name(cache.name + ".partial")
+    resume = json.loads(partial.read_text()) if partial.exists() else None
+    if resume:
+        print(f"resuming from partial cache ({len(resume)} turns): {partial}")
+    turns = _extract(
+        sample, args.max_sessions, args.turn_cap, args.model, args.sleep,
+        partial=partial, resume=resume,
+    )
+    _write_json(cache, turns)
+    partial.unlink(missing_ok=True)
     print(f"cached facts to {cache}")
     return turns
 
@@ -157,7 +189,10 @@ def main() -> int:
     ap.add_argument("--topk", type=int, default=10)
     ap.add_argument("--embedders", default="hash,st")
     ap.add_argument("--model", default="claude-haiku-4-5-20251001")
-    ap.add_argument("--sleep", type=float, default=1.2)
+    ap.add_argument(
+        "--sleep", type=float, default=12.0,
+        help="pace between extraction calls in seconds (~5 RPM tiers need >=12)",
+    )
     ap.add_argument("--cache", default=None)
     args = ap.parse_args()
 
