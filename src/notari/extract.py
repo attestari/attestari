@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
@@ -75,6 +76,27 @@ _SYSTEM = (
     "as name_is, lives_in, works_at, uses. Extract only stable facts worth "
     "remembering, not pleasantries. Return an empty list if there are none."
 )
+
+
+def default_extractor() -> Extractor:
+    """The best extractor available without extra setup — the extraction twin
+    of `embed.default_embedder()`.
+
+    Claude (`AnthropicExtractor`) when the `anthropic` extra is installed AND
+    `ANTHROPIC_API_KEY` is set (model overridable via `NOTARI_EXTRACTOR_MODEL`);
+    otherwise the zero-dependency `DeterministicExtractor`. Deployment entry
+    points (the REST server, MCP) use this, so "set the env var, get production
+    extraction" holds without writing code. Bare `Memory()` stays deterministic.
+    """
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        try:
+            import anthropic  # noqa: F401 - presence check only
+
+            model = os.environ.get("NOTARI_EXTRACTOR_MODEL")
+            return AnthropicExtractor(model=model) if model else AnthropicExtractor()
+        except ImportError:
+            pass
+    return DeterministicExtractor()
 
 
 class AnthropicExtractor:

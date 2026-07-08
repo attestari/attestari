@@ -74,6 +74,35 @@ def test_non_transient_error_not_retried() -> None:
     assert client.messages.calls == 1  # auth/invalid-request errors fail fast
 
 
+# --- default_extractor: env-driven production upgrade ----------------------- #
+
+def test_default_extractor_regex_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    from notari.extract import DeterministicExtractor, default_extractor
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert isinstance(default_extractor(), DeterministicExtractor)
+
+
+def test_default_extractor_claude_with_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    from notari.extract import default_extractor
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("NOTARI_EXTRACTOR_MODEL", "claude-haiku-4-5")
+    ex = default_extractor()
+    assert isinstance(ex, AnthropicExtractor)
+    assert ex.model == "claude-haiku-4-5"  # env override respected
+    monkeypatch.delenv("NOTARI_EXTRACTOR_MODEL")
+    assert default_extractor().model == "claude-opus-4-8"  # class default
+
+
+def test_default_extractor_falls_back_without_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    from notari.extract import DeterministicExtractor, default_extractor
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setitem(sys.modules, "anthropic", None)  # import anthropic -> ImportError
+    assert isinstance(default_extractor(), DeterministicExtractor)
+
+
 # --- eval extraction: checkpoint + resume ----------------------------------- #
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # repo root for `eval`

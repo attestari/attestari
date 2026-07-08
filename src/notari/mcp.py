@@ -25,13 +25,18 @@ def _memory() -> Memory:
     # storage would silently lose all memories on every app restart — the
     # opposite of a long-term memory product. Postgres when
     # NOTARI_DATABASE_URL is set; else a local SQLite file
-    # (NOTARI_SQLITE_PATH or ~/.notari/notari.db).
+    # (NOTARI_SQLITE_PATH or ~/.notari/notari.db). Extraction upgrades to
+    # Claude automatically when ANTHROPIC_API_KEY is set.
     from .embed import default_embedder
+    from .extract import default_extractor
 
     embedder = default_embedder()
+    extractor = default_extractor()
     if os.environ.get("NOTARI_DATABASE_URL"):
-        return Memory.postgres(embedder=embedder)
-    return Memory.local(os.environ.get("NOTARI_SQLITE_PATH"), embedder=embedder)
+        return Memory.postgres(embedder=embedder, extractor=extractor)
+    return Memory.local(
+        os.environ.get("NOTARI_SQLITE_PATH"), embedder=embedder, extractor=extractor
+    )
 
 
 # --- tool logic (plain functions; no MCP dependency) ---------------------- #

@@ -32,17 +32,22 @@ from .projection import Edge
 
 
 def _default_memory() -> Memory:
-    # Deployment defaults: real embeddings when available (falls back to
-    # HashEmbedder), and **durable** storage — Postgres when NOTARI_DATABASE_URL
-    # is set, else a local SQLite file (NOTARI_SQLITE_PATH or ~/.notari/
-    # notari.db). A memory server whose memory vanishes on restart is a broken
-    # promise; the ephemeral store stays available via create_app(Memory()).
+    # Deployment defaults — "set the env var, get production behaviour":
+    # real embeddings when the extra is installed; Claude extraction when
+    # ANTHROPIC_API_KEY is set; durable storage — Postgres when
+    # NOTARI_DATABASE_URL is set, else a local SQLite file (NOTARI_SQLITE_PATH
+    # or ~/.notari/notari.db). A memory server whose memory vanishes on restart
+    # is a broken promise; the ephemeral store stays via create_app(Memory()).
     from .embed import default_embedder
+    from .extract import default_extractor
 
     embedder = default_embedder()
+    extractor = default_extractor()
     if os.environ.get("NOTARI_DATABASE_URL"):
-        return Memory.postgres(embedder=embedder)
-    return Memory.local(os.environ.get("NOTARI_SQLITE_PATH"), embedder=embedder)
+        return Memory.postgres(embedder=embedder, extractor=extractor)
+    return Memory.local(
+        os.environ.get("NOTARI_SQLITE_PATH"), embedder=embedder, extractor=extractor
+    )
 
 
 def _iso(dt: datetime | None) -> str | None:

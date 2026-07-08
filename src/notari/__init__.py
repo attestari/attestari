@@ -13,7 +13,13 @@ from .audit import AuditEntry, AuditReport, verify, verify_entries
 from .backend import InMemoryProjectionBackend, ProjectionBackend
 from .crypto import EnvelopeCipher, NullCipher, cipher_from_env, generate_kek
 from .embed import Embedder, HashEmbedder, SentenceTransformerEmbedder, default_embedder
-from .extract import AnthropicExtractor, DeterministicExtractor, ExtractedFact, Extractor
+from .extract import (
+    AnthropicExtractor,
+    DeterministicExtractor,
+    ExtractedFact,
+    Extractor,
+    default_extractor,
+)
 from .memory import DeletionCertificate, Memory, Provenance
 from .predicates import Cardinality, PredicateRegistry, default_registry
 from .resolver import (
@@ -51,6 +57,7 @@ __all__ = [
     "Extractor",
     "DeterministicExtractor",
     "AnthropicExtractor",
+    "default_extractor",
     "ExtractedFact",
     "Embedder",
     "HashEmbedder",
