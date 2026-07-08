@@ -33,7 +33,7 @@ jobs:
         run: python examples/spike.py
 
       - name: Apply Postgres schema
-        run: psql "$NOTARI_DATABASE_URL" -f db/schema.sql
+        run: psql "$NOTARI_DATABASE_URL" -f src/notari/db/schema.sql
 
       - name: Install (dev + postgres + server)
         run: |

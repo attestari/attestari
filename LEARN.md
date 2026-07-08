@@ -94,7 +94,7 @@ killer/
 ├── examples/          ← runnable demos (start here to see it work)
 ├── eval/              ← measurement (tests of quality + speed + benchmarks)
 ├── tests/             ← automated tests (36 of them)
-├── db/schema.sql      ← the Postgres database design
+├── src/notari/db/schema.sql      ← the Postgres database design
 ├── docker-compose.yml ← one command to start Postgres
 ├── *.md               ← docs (README, CONTRIBUTING, this file)
 ├── pyproject.toml     ← Python package config (name, dependencies)
@@ -231,7 +231,7 @@ directly. *Concept: integration/distribution.*
 write `from notari import Memory` instead of digging into files. *Concept: a
 package's public API.*
 
-### The database — `db/schema.sql`
+### The database — `src/notari/db/schema.sql`
 
 SQL that creates the Postgres tables: `episode` and `fact_event` (the event log),
 `entity`/`edge` (the materialized projection, with `vector(384)` columns for
@@ -255,7 +255,7 @@ makes vector search fast). *Concept: schema = the database's blueprint.*
 - **`locomo.py`** — the rough real-world benchmark slice (recall on a real
   conversation dataset).
 
-### Automated tests — `tests/` (75 tests)
+### Automated tests — `tests/` (79 tests)
 
 One file per feature: `test_spike.py` (core loop), `test_postgres.py`,
 `test_server.py`, `test_crypto.py` + `test_crypto_shred.py`, `test_audit.py`,

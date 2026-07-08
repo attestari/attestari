@@ -133,7 +133,7 @@ The read/query side sits behind a **`ProjectionBackend`** port
   — a durable **`PostgresEventStore`** plus **materialised** `entity`/`edge`
   projection tables (rebuildable from the log), with **hybrid retrieval evaluated
   in SQL**: pgvector cosine + Postgres full-text + the bi-temporal `as_of` filter.
-  This lights up the HNSW index defined in [db/schema.sql](db/schema.sql).
+  This lights up the HNSW index defined in [src/notari/db/schema.sql](src/notari/db/schema.sql).
 
 `Memory.postgres()` wires the durable store and backend together. The whole thing
 runs on **one Postgres + pgvector container — no graph database required.**

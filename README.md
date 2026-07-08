@@ -165,9 +165,16 @@ mem = Memory.local()      # or Memory.local("path/to/agent.db")
 **Durable, on Postgres + pgvector** (one container, no graph DB):
 
 ```bash
-NOTARI_PG_PORT=5433 docker compose up -d
+NOTARI_PG_PORT=5433 docker compose up -d       # applies the schema on first boot
 pip install -e ".[postgres,embeddings]"
 export NOTARI_DATABASE_URL=postgresql://notari:notari@localhost:5433/notari
+```
+
+Already have a Postgres (managed or local)? The schema ships **inside the pip
+package** — no clone needed:
+
+```bash
+python -m notari.initdb postgresql://user:pass@host:5432/db   # idempotent
 ```
 ```python
 from notari import Memory
@@ -225,10 +232,12 @@ python examples/spike.py --llm anthropic
 
 | Variable | Effect |
 |---|---|
-| `NOTARI_DATABASE_URL` | Postgres DSN; enables the durable store. |
+| `NOTARI_DATABASE_URL` | Postgres DSN; the server/MCP use Postgres instead of local SQLite. |
+| `NOTARI_SQLITE_PATH` | Where `Memory.local()`-backed server/MCP keep the SQLite file (default `~/.notari/notari.db`). |
 | `NOTARI_KEK` | Root key-encryption key; turns on crypto-shred deletion. |
 | `NOTARI_PG_PORT` | Host port for the bundled `docker compose` Postgres (default 5432). |
-| `ANTHROPIC_API_KEY` | Used by the Claude-powered extractor. |
+| `ANTHROPIC_API_KEY` | Enables Claude fact extraction — the server/MCP upgrade from the regex extractor automatically. |
+| `NOTARI_EXTRACTOR_MODEL` | Override the extraction model (default `claude-opus-4-8`). |
 
 **Install extras** (`pip install -e ".[extra]"`):
 
@@ -290,7 +299,7 @@ examples/           runnable demos — start with spike.py
 eval/               quality + retrieval-latency harness
 clients/ts/         the TypeScript SDK (@notari/client)
 clients/langchain/  the LangChain integration (notari-langchain)
-db/schema.sql       the Postgres bi-temporal schema
+src/notari/db/schema.sql       the Postgres bi-temporal schema
 docker-compose.yml  Postgres + pgvector
 ```
 

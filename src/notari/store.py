@@ -40,7 +40,7 @@ class EventStore(Protocol):
 class InMemoryEventStore:
     """In-memory adapter: keeps the log in a list. Deterministic and dependency
     free, so the spike, tests, and eval run anywhere. The PostgresEventStore
-    implements the same protocol against db/schema.sql.
+    implements the same protocol against src/notari/db/schema.sql.
 
     With a cipher enabled, PII is stored as ciphertext and `forget()` (via
     `shred_subject`) makes it unrecoverable — the same crypto-shred guarantee as

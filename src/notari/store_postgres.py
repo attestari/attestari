@@ -1,7 +1,7 @@
 """PostgresEventStore — the durable event-log adapter.
 
 Implements the same `EventStore` protocol as `InMemoryEventStore`, persisting
-events to `db/schema.sql` (the `episode` and `fact_event` tables) and
+events to `src/notari/db/schema.sql` (the `episode` and `fact_event` tables) and
 reconstructing them on read. Because `Memory` and `Projector` consume only
 `events()`, swapping this store in makes the whole engine durable — survives
 process restarts — without changing a line of the core logic.
@@ -383,7 +383,7 @@ class PostgresProjectionBackend:
     Rebuilds the `entity`/`edge` projection tables from the durable event log and
     serves hybrid retrieval in SQL: pgvector cosine similarity + Postgres
     full-text ranking + a bi-temporal `as_of` filter. This is what lights up the
-    HNSW index in db/schema.sql. `project()` still folds the log for
+    HNSW index in src/notari/db/schema.sql. `project()` still folds the log for
     timeline/supersession (the log is the source of truth); only `search()` reads
     the materialised table.
 

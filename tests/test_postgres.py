@@ -100,3 +100,20 @@ def test_postgres_forget_persists_certificate_and_isolates() -> None:
     mem2 = Memory.postgres(DSN)
     assert mem2.answer("where does the user live", subject_id="u1") is None
     assert mem2.answer("where does the user live", subject_id="u2") == "Chennai"
+
+
+def test_initdb_is_packaged_and_idempotent() -> None:
+    """The schema ships inside the package (pip-only users need no clone), and
+    applying it to an already-initialised database is a no-op, not an error."""
+    from notari.initdb import init_db, schema_sql
+
+    sql = schema_sql()
+    assert "CREATE TABLE IF NOT EXISTS episode" in sql
+    assert "event_seq" in sql  # includes the lightweight migrations
+
+    _reset()
+    init_db(DSN)  # DB already has the schema — must be idempotent
+    mem = Memory.postgres(DSN)
+    mem.add("Hi, I'm Alice. I live in Berlin.", subject_id="u1")
+    assert mem.answer("where does the user live", subject_id="u1") == "Berlin"
+    _reset()
