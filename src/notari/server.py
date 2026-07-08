@@ -69,17 +69,50 @@ class AddRequest(BaseModel):
     valid_from: str | None = None
     source_ref: str | None = None
 
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "text": "Hi, my name is Dana. I live in Berlin and I work at Acme.",
+                    "subject_id": "u1",
+                    "valid_from": "2026-03-01",
+                    "source_ref": "msg-001",
+                }
+            ]
+        }
+    }
+
 
 def create_app(memory: Memory | None = None) -> FastAPI:
     mem = memory or _default_memory()
-    app = FastAPI(title="Notari", version="0.0.1")
+    app = FastAPI(
+        title="Notari",
+        version="0.0.1",
+        description=(
+            "**The auditable memory layer for AI agents.** Every fact carries a "
+            "receipt, the history is tamper-evident, and any subject's data can "
+            "be provably deleted — crypto-shred plus a signed certificate.\n\n"
+            "The interactive console (memory graph, time-travel slider, "
+            "click-to-trace provenance) lives at [`/`](/)."
+        ),
+    )
 
-    @app.get("/healthz")
+    @app.get("/healthz", summary="Liveness check")
     def healthz() -> dict[str, str]:
+        """Returns `{"status": "ok"}` when the server is up."""
         return {"status": "ok"}
 
-    @app.post("/v1/add")
+    @app.post("/v1/add", summary="Ingest a message and remember its durable facts")
     def add(req: AddRequest) -> dict[str, Any]:
+        """Store the raw message as an episode (the provenance record), extract
+        durable facts from it, and remember them.
+
+        Exact duplicates are skipped; a new value for a single-valued predicate
+        (e.g. `lives_in`) **supersedes** the old one — the prior fact is closed,
+        not erased, so history stays reconstructable. `valid_from` (ISO date)
+        backdates when the facts became true in the world. Returns the ids of
+        the newly asserted facts.
+        """
         fact_ids = mem.add(
             req.text,
             subject_id=req.subject_id,
@@ -91,23 +124,38 @@ def create_app(memory: Memory | None = None) -> FastAPI:
         )
         return {"fact_ids": fact_ids}
 
-    @app.get("/v1/search")
+    @app.get("/v1/search", summary="Hybrid recall — now, or as of any past instant")
     def search(
         q: str,
         subject_id: str | None = None,
         as_of: str | None = None,
         limit: int = 5,
     ) -> dict[str, Any]:
+        """Semantic + keyword retrieval over the facts **valid at the requested
+        instant**: omit `as_of` to query what's true now, or pass an ISO
+        date/datetime to time-travel ("what did memory believe on that day?").
+        `subject_id` scopes recall to one data subject. Every result carries its
+        fact id, so provenance is always one call away.
+        """
         results = mem.search(q, subject_id=subject_id, as_of=as_of, limit=limit)
         return {"results": [{"score": r.score, "fact": _edge_dict(r.edge)} for r in results]}
 
-    @app.get("/v1/timeline")
+    @app.get("/v1/timeline", summary="Full bi-temporal history for a subject or entity")
     def timeline(subject_id: str | None = None, subject: str | None = None) -> dict[str, Any]:
+        """Every fact — current **and** superseded — oldest first, each with its
+        valid-time window and `alive` flag. This is the "show me how the memory
+        evolved" view; corrections close windows, they never erase rows.
+        """
         edges = mem.timeline(subject=subject, subject_id=subject_id)
         return {"edges": [_edge_dict(e) for e in edges]}
 
-    @app.get("/v1/provenance/{fact_id}")
+    @app.get("/v1/provenance/{fact_id}", summary="Trace a fact to its source")
     def provenance(fact_id: str) -> dict[str, Any]:
+        """Where did this memory come from? Returns the source episode, the
+        **exact snippet** of raw text the fact was extracted from (via its
+        character span), the caller-supplied `source_ref`, and when it was
+        learned.
+        """
         p = mem.get_provenance(fact_id)
         if p is None:
             raise HTTPException(status_code=404, detail="fact not found")
@@ -119,8 +167,18 @@ def create_app(memory: Memory | None = None) -> FastAPI:
             "source_ref": p.source_ref,
         }
 
-    @app.post("/v1/forget/{subject_id}")
+    @app.post(
+        "/v1/forget/{subject_id}",
+        summary="Right-to-be-forgotten: crypto-shred + signed certificate",
+    )
     def forget(subject_id: str, requested_by: str = "system") -> dict[str, Any]:
+        """Erase one subject's entire scope (GDPR Art. 17). With encryption
+        enabled (`NOTARI_KEK`), their per-subject key is **destroyed**, so the
+        retained ciphertext is unrecoverable — including in backups of the
+        content. Returns a signed `DeletionCertificate` (counts + manifest
+        hash): the proof that survives after the data is gone. The audit chain
+        remains verifiable.
+        """
         cert = mem.forget(subject_id, requested_by=requested_by)
         return {
             "certificate_id": cert.certificate_id,
@@ -132,19 +190,31 @@ def create_app(memory: Memory | None = None) -> FastAPI:
             "issued_at": _iso(cert.issued_at),
         }
 
-    @app.get("/v1/conflicts")
+    @app.get("/v1/conflicts", summary="Values that contradicted each other over time")
     def conflicts(subject_id: str | None = None) -> dict[str, Any]:
+        """Single-valued predicates that held more than one distinct value
+        (e.g. `lives_in`: Delhi → Berlin), with the full value history and how
+        the conflict was resolved (recency). Conflicts are **surfaced**, never
+        silently dropped.
+        """
         return {"conflicts": mem.conflicts(subject_id=subject_id)}
 
-    @app.get("/v1/audit/verify")
+    @app.get("/v1/audit/verify", summary="Verify the tamper-evident hash chain")
     def audit_verify() -> dict[str, Any]:
+        """Walk the hash-linked audit chain over the event log. Any reorder,
+        insertion, or deletion of history breaks a link and is reported at the
+        exact `broken_at` seq. Verification uses content digests only — no PII —
+        so it still passes after a subject is crypto-shredded.
+        """
         r = mem.verify_audit()
         return {"ok": r.ok, "entries": r.entries, "head": r.head, "broken_at": r.broken_at}
 
-    @app.get("/v1/graph")
+    @app.get("/v1/graph", summary="Nodes + edges for the console's time-slider view")
     def graph(subject_id: str | None = None) -> dict[str, Any]:
-        """All facts (current + superseded) as nodes+edges for the console. The
-        client filters by the time slider using valid_from/valid_to."""
+        """All facts (current + superseded) as a nodes+edges graph. The console
+        filters client-side against `valid_from`/`valid_to` as the time slider
+        moves.
+        """
         edges = mem.timeline(subject_id=subject_id)
         nodes: dict[str, dict[str, str]] = {}
         for e in edges:
@@ -152,8 +222,10 @@ def create_app(memory: Memory | None = None) -> FastAPI:
             nodes.setdefault(e.object, {"id": e.object, "label": e.object, "kind": "value"})
         return {"nodes": list(nodes.values()), "edges": [_edge_dict(e) for e in edges]}
 
-    @app.get("/", response_class=HTMLResponse)
+    @app.get("/", response_class=HTMLResponse, summary="The Notari console", include_in_schema=True)
     def console() -> str:
+        """A single self-contained page: the memory graph with a time-travel
+        slider, click-to-trace provenance, and a forget button."""
         from .console import CONSOLE_HTML
 
         return CONSOLE_HTML
