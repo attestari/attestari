@@ -78,9 +78,22 @@ counts, manifest hash, timestamp).
 
 **Honest boundary.** This is *crypto-shred*, so its guarantee is "the key is
 destroyed and the cipher is sound," not "the bytes were physically overwritten on
-every replica" — which is exactly what makes it work across backups and replicas
-you don't control. It requires encryption enabled — pass an `EnvelopeCipher` (as
-the demo does) or set `NOTARI_KEK`; this works with **either** the in-memory or
+every replica." For the **content**, that's exactly what makes it work across
+backups and replicas you don't control: every copy of the data is ciphertext, so
+destroying the key kills them all at once, no scrubbing required. The **key
+store is the one exception**: a database backup taken *before* the shred also
+contains the subject's wrapped DEK, and restoring it while the KEK still lives
+would bring the key — and therefore the data — back. So key storage needs its
+own policy, any one of: **exclude the `keyring` table from ordinary backups**
+(a separate, short-retention key backup is the standard crypto-shred deployment
+pattern); **rotate the KEK on a schedule and destroy old versions** (old backups
+then hold DEKs wrapped under a dead KEK, bounding resurrection to the rotation
+window); or **hold the KEK in a KMS with enforced key-version destruction**.
+This is a property of every crypto-shred system, not a Notari quirk — we'd
+rather you read it here than discover it in an audit.
+
+Crypto-shred requires encryption enabled — pass an `EnvelopeCipher` (as the
+demo does) or set `NOTARI_KEK`; this works with **either** the in-memory or
 the Postgres store, so the demo proves it end-to-end with no database. With no
 cipher (the zero-dependency default), `forget()` is a logical delete plus
 certificate — the content is dropped from all reads but not cryptographically

@@ -74,7 +74,9 @@ catches any edit, insert, or delete — and the proof survives deletion.
 - **Bi-temporal time travel** — query memory `as_of` any past instant; corrections
   supersede old facts without erasing them, so history is always reconstructable.
 - **Provable deletion** — `forget(subject_id)` crypto-shreds a user's data and
-  returns a signed `DeletionCertificate`; backups and replicas are covered.
+  returns a signed `DeletionCertificate`; content backups and replicas are
+  covered (key storage needs its own backup policy — see
+  [the threat model](docs/the-moat.md)).
 - **Tamper-evident audit** — a hash-linked event chain; `verify_audit()` detects
   any edit/insert/delete, and the proof survives crypto-shred.
 - **Conflict resolution** — single- vs multi-valued predicates; conflicts are

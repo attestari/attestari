@@ -33,3 +33,9 @@ detection," "PII leaks across subjects").
 - `subject_id` is a plaintext partition key — it must be an opaque pseudonym, not
   raw PII. Misuse here is a deployment concern, but we're happy to discuss
   hardening.
+- Crypto-shred makes every backed-up copy of the *content* unrecoverable, but a
+  backup of the `keyring` table taken before a shred can restore the wrapped
+  key. Deployments must exclude the keyring from ordinary backups, rotate the
+  KEK, or hold it in a KMS — see the threat model in
+  [docs/the-moat.md](docs/the-moat.md). This is inherent to crypto-shred, not a
+  vulnerability, but reports on the key lifecycle are very welcome.
