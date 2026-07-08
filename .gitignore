@@ -35,3 +35,6 @@ clients/ts/dist/
 .DS_Store
 .idea/
 .vscode/
+
+# Local agent tooling (launch.json can hold a dev KEK / local env)
+.claude/
