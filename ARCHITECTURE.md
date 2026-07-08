@@ -115,12 +115,20 @@ the single top object.
 
 ## Storage backends
 
+The write side is an **`EventStore`** port with three adapters — in-memory
+([store.py](src/notari/store.py)), a single local SQLite file
+([store_sqlite.py](src/notari/store_sqlite.py), stdlib only: durable with zero
+infrastructure, for single-process agents and MCP), and Postgres
+([store_postgres.py](src/notari/store_postgres.py)). All three share the same
+audit-chain and key-lifecycle components, so the guarantees cannot drift
+between tiers.
+
 The read/query side sits behind a **`ProjectionBackend`** port
 ([backend.py](src/notari/backend.py)) with two implementations:
 
-- **`InMemoryProjectionBackend`** — folds the event log on every read. Zero
-  dependencies and fully deterministic; this is the reference behaviour the other
-  backend is checked against.
+- **`InMemoryProjectionBackend`** — folds the event log on every read (used by
+  the in-memory and SQLite tiers). Zero dependencies and fully deterministic;
+  this is the reference behaviour the other backend is checked against.
 - **`PostgresProjectionBackend`** ([store_postgres.py](src/notari/store_postgres.py))
   — a durable **`PostgresEventStore`** plus **materialised** `entity`/`edge`
   projection tables (rebuildable from the log), with **hybrid retrieval evaluated

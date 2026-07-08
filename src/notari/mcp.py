@@ -20,12 +20,18 @@ from .memory import Memory
 
 
 def _memory() -> Memory:
+    # Durable by default. MCP stdio servers are spawned and killed by the
+    # client app (Claude Desktop restarts => new process), so ephemeral
+    # storage would silently lose all memories on every app restart — the
+    # opposite of a long-term memory product. Postgres when
+    # NOTARI_DATABASE_URL is set; else a local SQLite file
+    # (NOTARI_SQLITE_PATH or ~/.notari/notari.db).
     from .embed import default_embedder
 
     embedder = default_embedder()
     if os.environ.get("NOTARI_DATABASE_URL"):
         return Memory.postgres(embedder=embedder)
-    return Memory(embedder=embedder)
+    return Memory.local(os.environ.get("NOTARI_SQLITE_PATH"), embedder=embedder)
 
 
 # --- tool logic (plain functions; no MCP dependency) ---------------------- #

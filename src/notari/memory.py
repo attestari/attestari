@@ -9,6 +9,7 @@ with the materialised-projection backend (pgvector + full-text retrieval).
 from __future__ import annotations
 
 import hashlib
+import os
 import uuid
 from datetime import datetime, timezone
 
@@ -61,6 +62,24 @@ class Memory:
         )
         self.predicates: PredicateRegistry = predicates or default_registry()
         self.resolver: EntityResolver = resolver or LexicalEntityResolver(self.embedder)
+
+    @classmethod
+    def local(
+        cls,
+        path: "str | os.PathLike | None" = None,
+        *,
+        extractor: Extractor | None = None,
+        embedder: Embedder | None = None,
+    ) -> "Memory":
+        """Durable engine with **zero infrastructure**: events in one local
+        SQLite file (default `~/.notari/notari.db`), stdlib only — no server,
+        no container. Memory survives restarts; all guarantees (audit chain,
+        crypto-shred with `NOTARI_KEK`, deep verification) hold. One process at
+        a time — for a concurrent production service use `Memory.postgres()`."""
+        from .store_sqlite import SQLiteEventStore
+
+        store = SQLiteEventStore(path)
+        return cls(store=store, extractor=extractor, embedder=embedder)
 
     @classmethod
     def postgres(

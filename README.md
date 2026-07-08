@@ -106,8 +106,9 @@ One facade, `Memory`, covers the whole surface:
 ```python
 from notari import Memory
 
-mem = Memory()                       # zero-dep, in-memory
-# mem = Memory.postgres()            # durable on Postgres + pgvector
+mem = Memory()                       # zero-dep, in-memory (tests, demos)
+# mem = Memory.local()               # durable in one local SQLite file — zero infrastructure
+# mem = Memory.postgres()            # durable on Postgres + pgvector (production service)
 
 # --- write -------------------------------------------------------------
 fact_ids = mem.add(
@@ -145,6 +146,22 @@ cert   = mem.forget("alice")         # DeletionCertificate — provable erasure
 
 ## Run it for real
 
+Three storage tiers, one engine — every guarantee (audit chain, crypto-shred,
+deep verification, time travel) holds on all three:
+
+| Tier | Storage | For | Setup |
+|---|---|---|---|
+| `Memory()` | in-memory | tests, demos, determinism | none |
+| `Memory.local()` | one SQLite file (`~/.notari/notari.db`) | a personal agent, MCP, prototypes — durable, single-process | none (stdlib) |
+| `Memory.postgres()` | Postgres + pgvector | production: concurrent access, indexed hybrid search | one container |
+
+**Durable with zero infrastructure** (survives restarts; nothing to install or run):
+
+```python
+from notari import Memory
+mem = Memory.local()      # or Memory.local("path/to/agent.db")
+```
+
 **Durable, on Postgres + pgvector** (one container, no graph DB):
 
 ```bash
@@ -167,6 +184,9 @@ uvicorn notari.server:app   # API at /v1/*, the memory-graph console at /
 ```bash
 python -m notari.mcp        # exposes add_memory / search_memory / get_provenance / forget_subject
 ```
+Durable by default: memories go to a local SQLite file (`NOTARI_SQLITE_PATH` or
+`~/.notari/notari.db`), so they survive app restarts; set `NOTARI_DATABASE_URL`
+to use Postgres instead.
 
 **From TypeScript:** see [`clients/ts`](clients/ts) (`@notari/client`) — a thin
 typed client mirroring the `Memory` surface over the REST API.
