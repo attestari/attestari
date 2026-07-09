@@ -7,7 +7,7 @@ user's data can be **provably deleted** with a signed certificate.
 
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![python](https://img.shields.io/badge/python-3.11%2B-blue)
-![tests](https://img.shields.io/badge/tests-44%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-79%20passing-brightgreen)
 ![deps](https://img.shields.io/badge/core-zero%20dependencies-brightgreen)
 
 ```python
@@ -187,16 +187,36 @@ pip install -e ".[server]"
 uvicorn notari.server:app   # API at /v1/*, the memory-graph console at /
 ```
 
-**As an MCP server** (any agent — Claude, frameworks — can use it):
-```bash
-python -m notari.mcp        # exposes add_memory / search_memory / get_provenance / forget_subject
-```
-Durable by default: memories go to a local SQLite file (`NOTARI_SQLITE_PATH` or
-`~/.notari/notari.db`), so they survive app restarts; set `NOTARI_DATABASE_URL`
-to use Postgres instead.
+**As an MCP server** (any agent — Claude, frameworks — can use it) — exposes
+`add_memory / search_memory / get_provenance / forget_subject` over stdio.
+Register it in your MCP client's config (e.g. Claude Desktop's
+`claude_desktop_config.json`); the client launches the process for you:
 
-**From TypeScript:** see [`clients/ts`](clients/ts) (`@notari/client`) — a thin
-typed client mirroring the `Memory` surface over the REST API.
+```json
+{
+  "mcpServers": {
+    "notari": {
+      "command": "python",
+      "args": ["-m", "notari.mcp"],
+      "env": {
+        "NOTARI_SQLITE_PATH": "~/.notari/notari.db",
+        "ANTHROPIC_API_KEY": "sk-ant-...",
+        "NOTARI_KEK": "base64-kek-here"
+      }
+    }
+  }
+}
+```
+Only `command`/`args` are required. Durable by default (memories go to the local
+SQLite file, so they survive app restarts); the `env` block is where per-server
+config lives — add `NOTARI_DATABASE_URL` to use Postgres instead of SQLite,
+`ANTHROPIC_API_KEY` to upgrade extraction to Claude, `NOTARI_KEK` to enable
+crypto-shred. To run it standalone (e.g. to debug): `python -m notari.mcp`.
+
+**From TypeScript** — the TS client talks to the REST API, so **start the server
+first** (see above; it defaults to `http://localhost:8000`). Then see
+[`clients/ts`](clients/ts) (`@notari/client`), a thin typed client mirroring the
+`Memory` surface.
 
 **With LangChain:** see [`clients/langchain`](clients/langchain) (`notari-langchain`)
 — a `NotariRetriever` (recall facts with provenance) and `NotariChatMessageHistory`
@@ -208,6 +228,36 @@ pip install -e ".[anthropic]"
 export ANTHROPIC_API_KEY=sk-ant-...
 python examples/spike.py --llm anthropic
 ```
+
+**Enable crypto-shred deletion** (turn `forget()` from a logical delete into
+cryptographic erasure). Encryption is opt-in via a root key-encryption key
+(KEK); with none set, `forget()` still works but only drops the data from reads.
+Mint a KEK once and set it in the environment:
+```bash
+pip install -e ".[crypto]"
+export NOTARI_KEK=$(python -c "from notari.crypto import generate_kek; print(generate_kek())")
+```
+Now each subject's PII is encrypted at rest under a per-subject key, and
+`forget()` destroys that key — the ciphertext is unrecoverable, while the audit
+proof survives. **Keep the KEK out of the database and its backups** (env var or
+a KMS) — storing it next to the data defeats the shred. See the backup boundary
+in [docs/the-moat.md](docs/the-moat.md).
+
+**Deploying for real.** A production checklist:
+- **Storage:** use `Memory.postgres()` (concurrent access); apply the schema with
+  `python -m notari.initdb "$NOTARI_DATABASE_URL"`. `Memory.local()` (SQLite) is
+  single-process — great for one agent or an MCP server, not a shared service.
+- **Server:** run under a process manager, e.g.
+  `uvicorn notari.server:app --host 0.0.0.0 --port 8000 --workers 4` behind a
+  reverse proxy; put your own auth in front (the API ships without auth).
+- **Extraction & embeddings:** set `ANTHROPIC_API_KEY` (extraction auto-upgrades
+  to Claude) and install `[embeddings]` for real semantic vectors.
+- **Keys:** inject `NOTARI_KEK` from a KMS/secrets manager as an env var — never
+  bake it into an image or the DB. Back the `keyring` table up on a separate,
+  short-retention policy (or rotate the KEK) so a restored data backup can't
+  resurrect a shredded subject — see [docs/the-moat.md](docs/the-moat.md).
+- **Secrets:** nothing is read from a `.env` file automatically — export the vars
+  (or use your orchestrator's secret injection) before starting the process.
 
 ## REST API
 
@@ -313,7 +363,7 @@ docker-compose.yml  Postgres + pgvector
 ## Status
 
 The engine and its differentiators — verifiable deletion, tamper-evident audit,
-bi-temporal provenance, Postgres-native retrieval — are **built and tested** (44
+bi-temporal provenance, Postgres-native retrieval — are **built and tested** (79
 tests; Postgres p95 ≈ 1 ms).
 
 ## License

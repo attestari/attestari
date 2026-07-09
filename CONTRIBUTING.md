@@ -21,7 +21,7 @@ export NOTARI_DATABASE_URL=postgresql://notari:notari@localhost:5433/notari
 
 ```bash
 python examples/spike.py        # the zero-dependency end-to-end loop
-python -m pytest -q             # the test suite (39 tests)
+python -m pytest -q             # the test suite
 python -m eval.harness          # quality baseline
 python -m eval.bench --engine memory   # retrieval latency
 ```
