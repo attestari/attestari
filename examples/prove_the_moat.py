@@ -204,7 +204,10 @@ def main() -> int:
         except AssertionError as e:
             print(f"   \033[31m❌ claim FAILED: {e!r}\033[0m")
             ok = False
-    print(f"\n{'\033[32m✅ all three moat properties proven' if ok else '\033[31m❌ a claim did not hold'}\033[0m")
+    # NB: no backslash escapes inside the f-string expression — that's 3.12+
+    # syntax, and this demo must run on bare Python 3.11 (the README's floor).
+    verdict = "\033[32m✅ all three moat properties proven" if ok else "\033[31m❌ a claim did not hold"
+    print(f"\n{verdict}\033[0m")
     return 0 if ok else 1
 
 
