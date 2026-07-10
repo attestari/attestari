@@ -86,19 +86,32 @@ to, and we don't pretend otherwise.
 
 **Honest boundary.** This is *crypto-shred*, so its guarantee is "the key is
 destroyed and the cipher is sound," not "the bytes were physically overwritten on
-every replica." For the **content**, that's exactly what makes it work across
-backups and replicas you don't control: every copy of the data is ciphertext, so
-destroying the key kills them all at once, no scrubbing required. The **key
-store is the one exception**: a database backup taken *before* the shred also
-contains the subject's wrapped DEK, and restoring it while the KEK still lives
-would bring the key — and therefore the data — back. So key storage needs its
-own policy, any one of: **exclude the `keyring` table from ordinary backups**
-(a separate, short-retention key backup is the standard crypto-shred deployment
-pattern); **rotate the KEK on a schedule and destroy old versions** (old backups
-then hold DEKs wrapped under a dead KEK, bounding resurrection to the rotation
-window); or **hold the KEK in a KMS with enforced key-version destruction**.
-This is a property of every crypto-shred system, not a Notari quirk — we'd
-rather you read it here than discover it in an audit.
+every replica." For the **event log** — the source of truth — that's exactly what
+makes it work across backups and replicas you don't control: every copy of the
+log is ciphertext, so destroying the key kills them all at once, no scrubbing
+required. Two stores are the exceptions, and both get the same treatment:
+
+- **The key store.** A database backup taken *before* the shred also contains
+  the subject's wrapped DEK, and restoring it while the KEK still lives would
+  bring the key — and therefore the data — back. So key storage needs its own
+  policy, any one of: **exclude the `keyring` table from ordinary backups**
+  (a separate, short-retention key backup is the standard crypto-shred
+  deployment pattern); **rotate the KEK on a schedule and destroy old versions**
+  (old backups then hold DEKs wrapped under a dead KEK, bounding resurrection to
+  the rotation window); or **hold the KEK in a KMS with enforced key-version
+  destruction**.
+- **The projection tables** (`edge`, `entity` on the Postgres tier). Retrieval
+  needs plaintext — you can't full-text-search ciphertext — so the *derived*
+  read model holds fact text (and its embeddings) in the clear. It is dropped
+  and rebuilt on every `forget()`, so the live database is clean; but a backup
+  taken before the shred contains those plaintext rows. Projections are
+  **rebuildable state** — `rebuild()` regenerates them from the event log — so
+  the policy is simple: **exclude `edge` and `entity` from backups** entirely
+  (there is nothing in them a restore needs), which puts them in the same
+  policy bucket as the keyring.
+
+This is a property of every crypto-shred system that also has to be searchable,
+not a Notari quirk — we'd rather you read it here than discover it in an audit.
 
 Crypto-shred requires encryption enabled — pass an `EnvelopeCipher` (as the
 demo does) or set `NOTARI_KEK`; this works with **either** the in-memory or

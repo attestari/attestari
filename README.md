@@ -260,6 +260,9 @@ boundary in [docs/the-moat.md](docs/the-moat.md).
   bake it into an image or the DB. Back the `keyring` table up on a separate,
   short-retention policy (or rotate the KEK) so a restored data backup can't
   resurrect a shredded subject — see [docs/the-moat.md](docs/the-moat.md).
+- **Backups:** exclude the derived projection tables (`edge`, `entity`) as well —
+  they hold plaintext fact text for retrieval and are fully rebuildable from the
+  (ciphertext) event log, so backing them up only weakens the shred.
 - **Secrets:** nothing is read from a `.env` file automatically — export the vars
   (or use your orchestrator's secret injection) before starting the process.
 
