@@ -7,7 +7,7 @@ user's data can be **provably deleted** with a signed certificate.
 
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![python](https://img.shields.io/badge/python-3.11%2B-blue)
-![tests](https://img.shields.io/badge/tests-79%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-88%20passing-brightgreen)
 ![deps](https://img.shields.io/badge/core-zero%20dependencies-brightgreen)
 
 ```python
@@ -370,7 +370,7 @@ docker-compose.yml  Postgres + pgvector
 ## Status
 
 The engine and its differentiators — verifiable deletion, tamper-evident audit,
-bi-temporal provenance, Postgres-native retrieval — are **built and tested** (79
+bi-temporal provenance, Postgres-native retrieval — are **built and tested** (88
 tests; Postgres p95 ≈ 1 ms).
 
 ## License
