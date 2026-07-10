@@ -89,3 +89,16 @@ def test_subject_isolation():
     bob_docs = NotariRetriever(mem=mem, subject_id="bob").invoke("where does the user live?")
     blob = " ".join(d.page_content for d in bob_docs)
     assert "Berlin" in blob and "Toronto" not in blob
+
+
+def test_history_does_not_learn_from_ai_messages():
+    """Assistant turns are conversation, not testimony: a first-person pattern
+    in an AIMessage must not mint a fact attributed to the user."""
+    mem = Memory()
+    h = NotariChatMessageHistory(mem, subject_id="alice")
+    h.add_messages([AIMessage("I moved to Berlin and I work at Globex.")])
+    assert h.messages == []                      # nothing was learned
+    assert mem.timeline(subject_id="alice") == []
+    h.add_messages([HumanMessage("I live in Toronto.")])
+    blob = " ".join(m.content for m in h.messages)
+    assert "Toronto" in blob and "Berlin" not in blob

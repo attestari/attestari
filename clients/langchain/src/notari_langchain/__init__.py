@@ -108,7 +108,14 @@ class NotariChatMessageHistory(BaseChatMessageHistory):
         return [SystemMessage(content=f"Known facts about the user:\n{facts}")]
 
     def add_messages(self, messages: list[BaseMessage]) -> None:
+        # Only HUMAN turns become memories. Extractors attribute first-person
+        # statements ("I", "my") to the subject — ingesting an AIMessage would
+        # mint facts about the *user* out of the assistant's own words (e.g.
+        # "I'd say Berlin is lovely" -> lives_in Berlin). The assistant's turns
+        # are conversation, not testimony.
         for m in messages:
+            if m.type != "human":
+                continue
             content = m.content if isinstance(m.content, str) else str(m.content)
             if content.strip():
                 self.mem.add(content, subject_id=self.subject_id)

@@ -13,8 +13,8 @@ certificate, on plain Postgres or zero-dependency in memory:
   valid-from, confidence). Supports bi-temporal `as_of` recall. The idiomatic way
   to inject long-term memory into an LCEL / RAG chain or an agent tool.
 - **`NotariChatMessageHistory`** (`BaseChatMessageHistory`) — a drop-in history for
-  `RunnableWithMessageHistory`: it *learns facts* from each turn (not a raw
-  transcript), surfaces the subject's known facts as a system message, and maps
+  `RunnableWithMessageHistory`: it *learns facts* from each **human** turn (not a raw
+  transcript, and never from the assistant's own words), surfaces the subject's known facts as a system message, and maps
   `clear()` to Notari's provable deletion (`forget`).
 
 ## Install
@@ -88,7 +88,8 @@ chain_with_memory = RunnableWithMessageHistory(
 | `as_of` | `None` | Bi-temporal instant — recall what was true `as_of` this ISO date. |
 
 **`NotariChatMessageHistory(mem, subject_id)`** — `add_messages(msgs)` ingests each
-turn, `messages` returns the subject's live facts as one system message, and
+human turn (assistant messages are conversation, not testimony — they are not
+attributed to the user as facts), `messages` returns the subject's live facts as one system message, and
 `clear()` maps to provable deletion.
 
 A runnable, no-LLM example is in [`example.py`](example.py):
