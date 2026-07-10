@@ -239,9 +239,13 @@ export NOTARI_KEK=$(python -c "from notari.crypto import generate_kek; print(gen
 ```
 Now each subject's PII is encrypted at rest under a per-subject key, and
 `forget()` destroys that key — the ciphertext is unrecoverable, while the audit
-proof survives. **Keep the KEK out of the database and its backups** (env var or
-a KMS) — storing it next to the data defeats the shred. See the backup boundary
-in [docs/the-moat.md](docs/the-moat.md).
+proof survives. With the KEK set, the `DeletionCertificate` is also **signed**
+(HMAC-SHA256 under a KEK-derived key); anyone holding the KEK can verify it
+offline — `verify_certificate(cert, kek)` — and a certificate with any altered
+field fails. Without a KEK, `forget()` is a logical delete and the certificate
+is issued unsigned. **Keep the KEK out of the database and its backups** (env
+var or a KMS) — storing it next to the data defeats the shred. See the backup
+boundary in [docs/the-moat.md](docs/the-moat.md).
 
 **Deploying for real.** A production checklist:
 - **Storage:** use `Memory.postgres()` (concurrent access); apply the schema with

@@ -20,11 +20,21 @@ to it, so "how we seal, encrypt, and shred" cannot drift between the two.
 from __future__ import annotations
 
 import base64
+import dataclasses
+import hashlib
+import hmac
 import os
 import secrets
 from typing import Protocol
 
+from .records import DeletionCertificate
+
 _NONCE = 12  # AES-GCM nonce length
+
+# Domain separation for the certificate-signing key derived from the KEK, so a
+# signature can never be confused with (or replayed as) any other KEK use.
+_CERT_SIGNING_INFO = b"notari/certificate-signing/v1"
+CERT_ALGORITHM = "hmac-sha256-kek-v1"
 
 
 class NullCipher:
@@ -46,6 +56,12 @@ class NullCipher:
 
     def decrypt(self, dek: bytes, token: str) -> str:
         return token
+
+    def sign(self, data: bytes) -> bytes:
+        return b""  # no key material -> nothing to sign with
+
+    def verify_signature(self, data: bytes, signature: bytes) -> bool:
+        return False  # an unsigned deployment can never verify a signature
 
 
 class EnvelopeCipher:
@@ -72,6 +88,20 @@ class EnvelopeCipher:
 
     def decrypt(self, dek: bytes, token: str) -> str:
         return self._open(dek, base64.b64decode(token)).decode()
+
+    # --- signing (deletion certificates) ---
+
+    def sign(self, data: bytes) -> bytes:
+        """HMAC-SHA256 over `data` under a key *derived* from the KEK (domain-
+        separated, so certificate signatures and content encryption can never
+        cross). Symmetric by design: whoever holds the KEK can both issue and
+        verify — the KEK already is the deployment's root of trust. Keep it in
+        a KMS and the signature is as strong as the shred itself."""
+        signing_key = hmac.new(self._kek, _CERT_SIGNING_INFO, hashlib.sha256).digest()
+        return hmac.new(signing_key, data, hashlib.sha256).digest()
+
+    def verify_signature(self, data: bytes, signature: bytes) -> bool:
+        return hmac.compare_digest(self.sign(data), signature)
 
     # --- internals ---
 
@@ -167,6 +197,57 @@ class KeyManager:
     def reset_cache(self) -> None:
         """Drop unwrapped-DEK cache (e.g. after a test truncate)."""
         self._dek.clear()
+
+
+def certificate_payload(cert: DeletionCertificate) -> bytes:
+    """The canonical byte string a certificate's signature commits to.
+
+    Version-prefixed and pipe-joined; the timestamp is committed as epoch
+    microseconds (identical however the datetime is stored or rendered), the
+    same convention the audit chain uses. Signature/algorithm themselves are
+    excluded — they carry the commitment, they are not part of it.
+    """
+    issued_us = str(int(round(cert.issued_at.timestamp() * 1_000_000)))
+    return "|".join(
+        [
+            "notari-cert-v1",
+            cert.certificate_id,
+            cert.subject_id,
+            cert.requested_by,
+            str(cert.episodes_deleted),
+            str(cert.facts_deleted),
+            cert.manifest_hash,
+            issued_us,
+        ]
+    ).encode()
+
+
+def sign_certificate(
+    cert: DeletionCertificate, cipher: NullCipher | EnvelopeCipher
+) -> DeletionCertificate:
+    """Return the certificate with `signature` + `algorithm` filled in.
+
+    With encryption enabled the signature is HMAC-SHA256 over the canonical
+    payload, under a key derived from the KEK — forging or altering a
+    certificate requires the root key. With a NullCipher (no `NOTARI_KEK`)
+    the certificate is returned unsigned (`signature=None`): a logical-delete
+    deployment has no root of trust to sign with, and we don't pretend.
+    """
+    if not cipher.enabled:
+        return cert
+    sig = base64.b64encode(cipher.sign(certificate_payload(cert))).decode()
+    return dataclasses.replace(cert, signature=sig, algorithm=CERT_ALGORITHM)
+
+
+def verify_certificate(cert: DeletionCertificate, kek_b64: str) -> bool:
+    """Auditor-facing check: does this certificate's signature verify under the
+    deployment KEK (base64, as in `NOTARI_KEK`)? Recomputes the canonical
+    payload from the certificate's own fields, so any altered field — counts,
+    subject, manifest hash, timestamp — fails verification."""
+    if not cert.signature or cert.algorithm != CERT_ALGORITHM:
+        return False
+    cipher = EnvelopeCipher(base64.b64decode(kek_b64))
+    return cipher.verify_signature(certificate_payload(cert), base64.b64decode(cert.signature))
 
 
 def cipher_from_env() -> NullCipher | EnvelopeCipher:

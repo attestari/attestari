@@ -184,9 +184,11 @@ def create_app(memory: Memory | None = None) -> FastAPI:
         """Erase one subject's entire scope (GDPR Art. 17). With encryption
         enabled (`NOTARI_KEK`), their per-subject key is **destroyed**, so the
         retained ciphertext is unrecoverable — including in backups of the
-        content. Returns a signed `DeletionCertificate` (counts + manifest
-        hash): the proof that survives after the data is gone. The audit chain
-        remains verifiable.
+        event log. Returns a `DeletionCertificate` (counts + manifest hash):
+        the proof that survives after the data is gone. With `NOTARI_KEK` set
+        the certificate is **signed** (HMAC-SHA256 under a KEK-derived key —
+        verify offline with `notari.crypto.verify_certificate`); without it,
+        `signature` is null. The audit chain remains verifiable either way.
         """
         cert = mem.forget(subject_id, requested_by=requested_by)
         return {
@@ -197,6 +199,8 @@ def create_app(memory: Memory | None = None) -> FastAPI:
             "facts_deleted": cert.facts_deleted,
             "manifest_hash": cert.manifest_hash,
             "issued_at": _iso(cert.issued_at),
+            "signature": cert.signature,
+            "algorithm": cert.algorithm,
         }
 
     @app.get("/v1/conflicts", summary="Values that contradicted each other over time")

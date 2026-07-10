@@ -73,8 +73,16 @@ audit proof after forget     ok=True (proof survives erasure)
 indistinguishable from noise; recovery is infeasible. Yet the audit chain hashes
 *content digests, not raw content*, so shredding the content does **not** break the
 chain: `verify_audit()` still returns ok. You get erasure **and** a durable proof
-it happened, including a signed `DeletionCertificate` (subject, requester,
-counts, manifest hash, timestamp).
+it happened, including a **signed** `DeletionCertificate` (subject, requester,
+counts, manifest hash, timestamp). The signature is HMAC-SHA256 over the
+certificate's canonical payload under a key *derived* from the KEK
+(domain-separated from content encryption); `notari.crypto.verify_certificate`
+recomputes it, so a forged certificate — or a real one with any altered field —
+fails verification. It is symmetric by design: the KEK is already the
+deployment's root of trust, so hold it in a KMS and the signature is as strong
+as the shred. With no KEK configured (logical-delete mode) the certificate is
+issued **unsigned** (`signature = None`) — there is no root key to anchor it
+to, and we don't pretend otherwise.
 
 **Honest boundary.** This is *crypto-shred*, so its guarantee is "the key is
 destroyed and the cipher is sound," not "the bytes were physically overwritten on

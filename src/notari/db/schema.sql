@@ -84,8 +84,13 @@ CREATE TABLE IF NOT EXISTS deletion_certificate (
     episodes_count INT         NOT NULL,
     facts_count    INT         NOT NULL,
     manifest_hash  TEXT        NOT NULL,           -- hash of what was deleted (content destroyed)
-    issued_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    issued_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    signature      TEXT,                           -- HMAC-SHA256 under a KEK-derived key (NULL = issued unsigned)
+    algorithm      TEXT                            -- e.g. 'hmac-sha256-kek-v1'
 );
+-- Idempotent migration for databases created before certificate signing:
+ALTER TABLE deletion_certificate ADD COLUMN IF NOT EXISTS signature TEXT;
+ALTER TABLE deletion_certificate ADD COLUMN IF NOT EXISTS algorithm TEXT;
 
 -- Per-subject data-encryption keys, wrapped under the root KEK (crypto-shred).
 -- PII at rest (episode.payload, fact object) is encrypted with the subject's DEK.

@@ -421,8 +421,9 @@ class PostgresProjectionBackend:
         self._conn.execute(
             """INSERT INTO deletion_certificate
                    (certificate_id, subject_id, requested_by,
-                    episodes_count, facts_count, manifest_hash, issued_at)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                    episodes_count, facts_count, manifest_hash, issued_at,
+                    signature, algorithm)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (
                 certificate.certificate_id,
                 certificate.subject_id,
@@ -431,6 +432,8 @@ class PostgresProjectionBackend:
                 certificate.facts_deleted,
                 certificate.manifest_hash,
                 certificate.issued_at,
+                certificate.signature,
+                certificate.algorithm,
             ),
         )
 

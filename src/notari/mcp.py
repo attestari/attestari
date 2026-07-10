@@ -101,6 +101,8 @@ def tool_forget(mem: Memory, subject_id: str, requested_by: str = "mcp") -> dict
         "facts_deleted": c.facts_deleted,
         "episodes_deleted": c.episodes_deleted,
         "manifest_hash": c.manifest_hash,
+        "signature": c.signature,
+        "algorithm": c.algorithm,
     }
 
 

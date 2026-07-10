@@ -25,7 +25,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from notari import EnvelopeCipher, InMemoryEventStore, Memory, generate_kek  # noqa: E402
+from notari import (  # noqa: E402
+    EnvelopeCipher,
+    InMemoryEventStore,
+    Memory,
+    generate_kek,
+    verify_certificate,
+)
 from notari.events import EpisodeIngested, FactAsserted  # noqa: E402
 
 import base64  # noqa: E402
@@ -99,8 +105,10 @@ def prove_provable_deletion() -> bool:
     # subject, DESTROYS that key. With the `crypto` extra we prove cryptographic
     # unrecoverability directly; without it we still prove logical erasure +
     # certificate + audit survival (the zero-dependency default).
+    kek = None
     if _have_crypto():
-        store = InMemoryEventStore(cipher=EnvelopeCipher(base64.b64decode(generate_kek())))
+        kek = generate_kek()
+        store = InMemoryEventStore(cipher=EnvelopeCipher(base64.b64decode(kek)))
         mem = Memory(store=store)
     else:
         kv("note", "cryptography not installed — proving logical deletion")
@@ -119,10 +127,22 @@ def prove_provable_deletion() -> bool:
     kv("before forget: recall", mem.answer("where does the user live", subject_id="u1"))
     assert mem.answer("where does the user live", subject_id="u1") == "Delhi"
 
-    # forget(): destroy the subject and issue a signed certificate.
+    # forget(): destroy the subject and issue a certificate — signed under a
+    # KEK-derived key when encryption is on, so it can't be forged or altered.
     cert = mem.forget("u1", requested_by="dpo@example.com")
     kv("deletion certificate", f"{cert.certificate_id[:8]} · {cert.facts_deleted} facts · "
        f"manifest {cert.manifest_hash[:12]}…")
+
+    if kek is not None:
+        import dataclasses
+
+        assert cert.signature is not None
+        kv("certificate is signed", f"{cert.algorithm} · sig {cert.signature[:16]}…")
+        assert verify_certificate(cert, kek)
+        kv("signature verifies", "verify_certificate(cert, KEK) = True")
+        forged = dataclasses.replace(cert, facts_deleted=cert.facts_deleted + 40)
+        assert not verify_certificate(forged, kek)
+        kv("forged copy rejected", "claiming 40 extra deletions -> verification FAILS")
 
     if store is not None:
         # The ciphertext row physically remains, but with no key it is AES-256-GCM

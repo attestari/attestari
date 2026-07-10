@@ -11,7 +11,15 @@ from __future__ import annotations
 
 from .audit import AuditEntry, AuditReport, verify, verify_entries
 from .backend import InMemoryProjectionBackend, ProjectionBackend
-from .crypto import EnvelopeCipher, NullCipher, cipher_from_env, generate_kek
+from .crypto import (
+    EnvelopeCipher,
+    NullCipher,
+    certificate_payload,
+    cipher_from_env,
+    generate_kek,
+    sign_certificate,
+    verify_certificate,
+)
 from .embed import Embedder, HashEmbedder, SentenceTransformerEmbedder, default_embedder
 from .extract import (
     AnthropicExtractor,
@@ -67,6 +75,9 @@ __all__ = [
     "NullCipher",
     "cipher_from_env",
     "generate_kek",
+    "certificate_payload",
+    "sign_certificate",
+    "verify_certificate",
     "AuditEntry",
     "AuditReport",
     "verify",

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 from .audit import AuditReport, verify, verify_entries
 from .backend import InMemoryProjectionBackend, ProjectionBackend
+from .crypto import sign_certificate
 from .embed import Embedder, HashEmbedder
 from .events import (
     EntityMerged,
@@ -303,7 +304,9 @@ class Memory:
 
     def forget(self, subject_id: str, *, requested_by: str = "system") -> DeletionCertificate:
         """Right-to-be-forgotten: destroy the subject's lineage and return a
-        signed certificate proving it happened."""
+        certificate proving it happened — HMAC-signed under a KEK-derived key
+        when encryption is enabled (verify with `crypto.verify_certificate`),
+        unsigned in the logical-delete (no-KEK) mode."""
         before = self._project()
         episodes = [e for e in before.episodes.values() if e.scope.subject_id == subject_id]
         facts = [e for e in before.edges.values() if e.subject_id == subject_id]
@@ -320,6 +323,12 @@ class Memory:
             manifest_hash=manifest_hash,
             issued_at=utcnow(),
         )
+        # Sign under the store's cipher (the KEK is the deployment's root of
+        # trust). NullCipher deployments get an unsigned certificate — honest,
+        # since logical delete has no key to anchor a signature to.
+        cipher = getattr(self.store, "cipher", None)
+        if cipher is not None:
+            certificate = sign_certificate(certificate, cipher)
 
         self.store.append(SubjectForgotten(subject_id=subject_id, requested_by=requested_by))
         self.backend.on_forget(certificate)

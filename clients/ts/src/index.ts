@@ -36,6 +36,9 @@ export interface DeletionCertificate {
   facts_deleted: number;
   manifest_hash: string;
   issued_at: string | null;
+  /** HMAC-SHA256 under a KEK-derived key; null when the server runs without NOTARI_KEK. */
+  signature: string | null;
+  algorithm: string | null;
 }
 
 export interface AuditReport {

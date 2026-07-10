@@ -72,6 +72,12 @@ def main() -> int:
     cert = mem.forget(SUBJECT, requested_by="dpo@example.com")
     print(f"   certificate {cert.certificate_id[:8]}: {cert.facts_deleted} facts, "
           f"{cert.episodes_deleted} episodes, manifest {cert.manifest_hash[:12]}…")
+    if cert.signature:
+        from notari import verify_certificate
+
+        verified = verify_certificate(cert, os.environ["NOTARI_KEK"])
+        print(f"   certificate signed    -> {cert.algorithm}, "
+              f"verify_certificate = {verified}")
     print(f"   recall after forget   -> {mem.answer('where does the user live', subject_id=SUBJECT)}")
     if crypto:
         conn = mem.store._conn
