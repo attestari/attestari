@@ -60,3 +60,37 @@ def test_console_is_served() -> None:
     r = _client().get("/")
     assert r.status_code == 200
     assert "reactflow" in r.text.lower()
+
+
+def test_audit_verify_deep_catches_content_tamper() -> None:
+    """?deep=true re-derives event digests: an in-place edit of a stored fact
+    passes chain-only verification but fails deep verification at its seq."""
+    import dataclasses
+
+    from notari.events import FactAsserted
+
+    mem = Memory()
+    c = TestClient(create_app(mem))
+    c.post("/v1/add", json={"text": "I live in Berlin.", "subject_id": "u1"})
+
+    assert c.get("/v1/audit/verify", params={"deep": "true"}).json()["ok"] is True
+
+    # Tamper: silently rewrite the stored fact's object, leaving the chain alone.
+    log = mem.store._log
+    i, ev = next((i, e) for i, e in enumerate(log) if isinstance(e, FactAsserted))
+    log[i] = dataclasses.replace(ev, object="Pyongyang")
+
+    shallow = c.get("/v1/audit/verify").json()
+    deep = c.get("/v1/audit/verify", params={"deep": "true"}).json()
+    assert shallow["ok"] is True          # chain-only cannot see content edits
+    assert deep["ok"] is False and deep["broken_at"] is not None
+    assert deep["deep"] is True
+
+
+def test_forget_returns_signature_fields() -> None:
+    c = _client()
+    c.post("/v1/add", json={"text": "I live in Berlin.", "subject_id": "u1"})
+    cert = c.post("/v1/forget/u1").json()
+    # NullCipher deployment: fields present, honestly null.
+    assert "signature" in cert and "algorithm" in cert
+    assert cert["signature"] is None and cert["algorithm"] is None

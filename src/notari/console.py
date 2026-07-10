@@ -21,6 +21,9 @@ CONSOLE_HTML = """<!doctype html>
   .bar input[type=text]{ padding:5px 8px; border:1px solid #bbb; border-radius:6px; }
   .bar button{ padding:5px 10px; border:1px solid #bbb; border-radius:6px; background:#f6f6f6; cursor:pointer; }
   .bar button.danger{ border-color:#d66; color:#a00; }
+  .chip{ padding:3px 9px; border-radius:999px; font-size:12px; font-variant-numeric:tabular-nums; }
+  .chip.ok{ background:#e7f7ec; color:#166534; border:1px solid #86dfa4; }
+  .chip.bad{ background:#fdeaea; color:#991b1b; border:1px solid #f3a6a6; }
   .asof{ font-variant-numeric:tabular-nums; color:#555; min-width:96px; }
   .main { flex:1; display:flex; min-height:0; }
   .flow { flex:1; }
@@ -44,6 +47,7 @@ function App() {
   const [bounds, setBounds] = React.useState([0, 0]);
   const [t, setT] = React.useState(Date.now());
   const [prov, setProv] = React.useState(null);
+  const [audit, setAudit] = React.useState(null);
 
   async function load() {
     const r = await fetch("/v1/graph?subject_id=" + encodeURIComponent(subject));
@@ -84,8 +88,16 @@ function App() {
     const r = await fetch("/v1/forget/" + encodeURIComponent(subject), { method: "POST" });
     const cert = await r.json();
     alert("Deleted " + cert.facts_deleted + " facts / " + cert.episodes_deleted +
-          " episodes.\\nCertificate " + cert.certificate_id);
+          " episodes.\\nCertificate " + cert.certificate_id +
+          (cert.signature ? "\\nSigned: " + cert.algorithm : "\\n(unsigned — no NOTARI_KEK)"));
     await load();
+    await verifyAudit();
+  }
+  async function verifyAudit() {
+    // Deep: re-derives every event's digest, not just the chain links — catches
+    // silent in-place content edits and flags rogue key deletions.
+    const r = await fetch("/v1/audit/verify?deep=true");
+    setAudit(await r.json());
   }
 
   const asof = new Date(t).toISOString().slice(0, 10);
@@ -98,6 +110,10 @@ function App() {
       h("input", { type: "range", min: bounds[0], max: bounds[1], value: t,
                    onChange: e => setT(Number(e.target.value)), style: { width: 200 } }),
       h("span", { className: "asof" }, asof),
+      h("button", { onClick: verifyAudit }, "Verify audit"),
+      audit && h("span", { className: "chip " + (audit.ok ? "ok" : "bad") },
+        audit.ok ? "chain intact \\u00b7 " + audit.entries + " entries (deep)"
+                 : "TAMPERED at seq " + audit.broken_at),
       h("button", { className: "danger", onClick: forget }, "Forget subject")),
     h("div", { className: "main" },
       h("div", { className: "flow" },

@@ -152,7 +152,9 @@ export class NotariClient {
     return r.conflicts;
   }
 
-  async verifyAudit(): Promise<AuditReport> {
-    return this.request("GET", "/v1/audit/verify");
+  /** Verify the tamper-evident audit chain. `deep` also re-checks stored event
+   *  content against the chain's digests (catches silent in-place edits). */
+  async verifyAudit(deep = false): Promise<AuditReport> {
+    return this.request("GET", `/v1/audit/verify${NotariClient.qs({ deep: deep ? "true" : undefined })}`);
   }
 }

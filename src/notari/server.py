@@ -213,14 +213,26 @@ def create_app(memory: Memory | None = None) -> FastAPI:
         return {"conflicts": mem.conflicts(subject_id=subject_id)}
 
     @app.get("/v1/audit/verify", summary="Verify the tamper-evident hash chain")
-    def audit_verify() -> dict[str, Any]:
+    def audit_verify(deep: bool = False) -> dict[str, Any]:
         """Walk the hash-linked audit chain over the event log. Any reorder,
         insertion, or deletion of history breaks a link and is reported at the
         exact `broken_at` seq. Verification uses content digests only — no PII —
         so it still passes after a subject is crypto-shredded.
+
+        `deep=true` additionally re-derives every stored event's digest and
+        re-hashes episode payloads against their `content_hash`, catching
+        **silent in-place edits to event content** — not just ledger tampering.
+        Deep verification survives sanctioned crypto-shreds and flags a rogue
+        key deletion at its exact seq.
         """
-        r = mem.verify_audit()
-        return {"ok": r.ok, "entries": r.entries, "head": r.head, "broken_at": r.broken_at}
+        r = mem.verify_audit(deep=deep)
+        return {
+            "ok": r.ok,
+            "entries": r.entries,
+            "head": r.head,
+            "broken_at": r.broken_at,
+            "deep": deep,
+        }
 
     @app.get("/v1/graph", summary="Nodes + edges for the console's time-slider view")
     def graph(subject_id: str | None = None) -> dict[str, Any]:
