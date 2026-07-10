@@ -54,6 +54,21 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt else None
 
 
+def _checked_iso(value: str | None, param: str) -> str | None:
+    """Validate an ISO date/datetime query field up front so a malformed value
+    is a 422 with a pointable message, not a 500 from deep in the engine."""
+    if value is None:
+        return None
+    try:
+        datetime.fromisoformat(value)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{param} must be an ISO date/datetime (e.g. 2026-01-01), got {value!r}",
+        ) from None
+    return value
+
+
 def _edge_dict(e: Edge) -> dict[str, Any]:
     return {
         "fact_id": e.fact_id,
@@ -128,7 +143,7 @@ def create_app(memory: Memory | None = None) -> FastAPI:
             agent_id=req.agent_id,
             session_id=req.session_id,
             org_id=req.org_id,
-            valid_from=req.valid_from,
+            valid_from=_checked_iso(req.valid_from, "valid_from"),
             source_ref=req.source_ref,
         )
         return {"fact_ids": fact_ids}
@@ -146,7 +161,11 @@ def create_app(memory: Memory | None = None) -> FastAPI:
         `subject_id` scopes recall to one data subject. Every result carries its
         fact id, so provenance is always one call away.
         """
-        results = mem.search(q, subject_id=subject_id, as_of=as_of, limit=limit)
+        if limit < 1:
+            raise HTTPException(status_code=422, detail="limit must be >= 1")
+        results = mem.search(
+            q, subject_id=subject_id, as_of=_checked_iso(as_of, "as_of"), limit=limit
+        )
         return {"results": [{"score": r.score, "fact": _edge_dict(r.edge)} for r in results]}
 
     @app.get("/v1/timeline", summary="Full bi-temporal history for a subject or entity")

@@ -67,7 +67,12 @@ def tool_search(
     as_of: str | None = None,
     limit: int = 5,
 ) -> dict[str, Any]:
-    results = mem.search(query, subject_id=subject_id, as_of=as_of, limit=limit)
+    try:
+        results = mem.search(query, subject_id=subject_id, as_of=as_of, limit=limit)
+    except ValueError:
+        # A malformed as_of should be a correctable tool error the agent can
+        # read and retry, not a crashed tool call.
+        return {"error": f"as_of must be an ISO date/datetime (e.g. 2026-01-01), got {as_of!r}"}
     return {
         "results": [
             {

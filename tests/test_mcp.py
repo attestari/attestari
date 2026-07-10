@@ -41,3 +41,9 @@ def test_mcp_server_builds() -> None:
 
     server = create_server(Memory())
     assert server is not None
+
+
+def test_tool_search_reports_malformed_as_of() -> None:
+    mem = Memory()
+    out = tool_search(mem, "where", as_of="not-a-date")
+    assert "error" in out and "as_of" in out["error"]

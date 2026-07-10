@@ -94,3 +94,12 @@ def test_forget_returns_signature_fields() -> None:
     # NullCipher deployment: fields present, honestly null.
     assert "signature" in cert and "algorithm" in cert
     assert cert["signature"] is None and cert["algorithm"] is None
+
+
+def test_malformed_dates_are_422_not_500() -> None:
+    c = _client()
+    r = c.get("/v1/search", params={"q": "x", "as_of": "not-a-date"})
+    assert r.status_code == 422 and "as_of" in r.json()["detail"]
+    r = c.post("/v1/add", json={"text": "I live in Berlin.", "valid_from": "13/01/2026"})
+    assert r.status_code == 422 and "valid_from" in r.json()["detail"]
+    assert c.get("/v1/search", params={"q": "x", "limit": 0}).status_code == 422
