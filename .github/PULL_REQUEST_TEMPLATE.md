@@ -1,4 +1,4 @@
-<!-- Thanks for contributing to Notari! Keep PRs small and focused. -->
+<!-- Thanks for contributing to Attestari! Keep PRs small and focused. -->
 
 ## What & why
 

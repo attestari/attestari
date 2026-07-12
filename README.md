@@ -1,4 +1,4 @@
-# Notari
+# Attestari
 
 **The auditable memory layer for AI agents.** Give your agent long-term memory —
 like any memory layer — except every fact carries a receipt (where it came from,
@@ -11,7 +11,7 @@ user's data can be **provably deleted** with a signed certificate.
 ![deps](https://img.shields.io/badge/core-zero%20dependencies-brightgreen)
 
 ```python
-from notari import Memory
+from attestari import Memory
 
 mem = Memory()
 mem.add("Hi, I'm Alice. I live in Toronto and I work at Acme.",
@@ -50,9 +50,9 @@ has **zero dependencies**.
 Hosted memory is a black box: you can't see where a "memory" came from, you can't
 cleanly delete one user's data, and you can't *prove* the history wasn't altered.
 For a bank, hospital, or insurer — and under GDPR / the EU AI Act — that's a
-dealbreaker. Notari is the neutral, self-hostable layer that fixes exactly that.
+dealbreaker. Attestari is the neutral, self-hostable layer that fixes exactly that.
 
-| | Notari | Typical memory layer |
+| | Attestari | Typical memory layer |
 |---|---|---|
 | Runs on plain Postgres (no graph DB) | ✅ | ✗ (needs Neo4j / a vector service) |
 | Provenance on every fact | ✅ | partial |
@@ -90,7 +90,7 @@ catches any edit, insert, or delete — and the proof survives deletion.
 ## Quickstart (30 seconds)
 
 ```bash
-git clone https://github.com/notarihq/notari && cd notari
+git clone https://github.com/attestari/attestari && cd attestari
 python examples/spike.py              # zero-dep end-to-end loop
 python examples/agent_with_memory.py  # the "give an agent memory" pattern
 ```
@@ -104,7 +104,7 @@ issues a certificate. No install, no API key, no database.
 One facade, `Memory`, covers the whole surface:
 
 ```python
-from notari import Memory
+from attestari import Memory
 
 mem = Memory()                       # zero-dep, in-memory (tests, demos)
 # mem = Memory.local()               # durable in one local SQLite file — zero infrastructure
@@ -152,39 +152,39 @@ deep verification, time travel) holds on all three:
 | Tier | Storage | For | Setup |
 |---|---|---|---|
 | `Memory()` | in-memory | tests, demos, determinism | none |
-| `Memory.local()` | one SQLite file (`~/.notari/notari.db`) | a personal agent, MCP, prototypes — durable, single-process | none (stdlib) |
+| `Memory.local()` | one SQLite file (`~/.attestari/attestari.db`) | a personal agent, MCP, prototypes — durable, single-process | none (stdlib) |
 | `Memory.postgres()` | Postgres + pgvector | production: concurrent access, indexed hybrid search | one container |
 
 **Durable with zero infrastructure** (survives restarts; nothing to install or run):
 
 ```python
-from notari import Memory
+from attestari import Memory
 mem = Memory.local()      # or Memory.local("path/to/agent.db")
 ```
 
 **Durable, on Postgres + pgvector** (one container, no graph DB):
 
 ```bash
-NOTARI_PG_PORT=5433 docker compose up -d       # applies the schema on first boot
+ATTESTARI_PG_PORT=5433 docker compose up -d       # applies the schema on first boot
 pip install -e ".[postgres,embeddings]"
-export NOTARI_DATABASE_URL=postgresql://notari:notari@localhost:5433/notari
+export ATTESTARI_DATABASE_URL=postgresql://attestari:attestari@localhost:5433/attestari
 ```
 
 Already have a Postgres (managed or local)? The schema ships **inside the pip
 package** — no clone needed:
 
 ```bash
-python -m notari.initdb postgresql://user:pass@host:5432/db   # idempotent
+python -m attestari.initdb postgresql://user:pass@host:5432/db   # idempotent
 ```
 ```python
-from notari import Memory
+from attestari import Memory
 mem = Memory.postgres()   # durable; materialized projections + pgvector + full-text search
 ```
 
 **As a REST API + visual console:**
 ```bash
 pip install -e ".[server]"
-uvicorn notari.server:app   # API at /v1/*, the memory-graph console at /
+uvicorn attestari.server:app   # API at /v1/*, the memory-graph console at /
 ```
 
 **As an MCP server** (any agent — Claude, frameworks — can use it) — exposes
@@ -195,13 +195,13 @@ Register it in your MCP client's config (e.g. Claude Desktop's
 ```json
 {
   "mcpServers": {
-    "notari": {
+    "attestari": {
       "command": "python",
-      "args": ["-m", "notari.mcp"],
+      "args": ["-m", "attestari.mcp"],
       "env": {
-        "NOTARI_SQLITE_PATH": "~/.notari/notari.db",
+        "ATTESTARI_SQLITE_PATH": "~/.attestari/attestari.db",
         "ANTHROPIC_API_KEY": "sk-ant-...",
-        "NOTARI_KEK": "base64-kek-here"
+        "ATTESTARI_KEK": "base64-kek-here"
       }
     }
   }
@@ -209,17 +209,17 @@ Register it in your MCP client's config (e.g. Claude Desktop's
 ```
 Only `command`/`args` are required. Durable by default (memories go to the local
 SQLite file, so they survive app restarts); the `env` block is where per-server
-config lives — add `NOTARI_DATABASE_URL` to use Postgres instead of SQLite,
-`ANTHROPIC_API_KEY` to upgrade extraction to Claude, `NOTARI_KEK` to enable
-crypto-shred. To run it standalone (e.g. to debug): `python -m notari.mcp`.
+config lives — add `ATTESTARI_DATABASE_URL` to use Postgres instead of SQLite,
+`ANTHROPIC_API_KEY` to upgrade extraction to Claude, `ATTESTARI_KEK` to enable
+crypto-shred. To run it standalone (e.g. to debug): `python -m attestari.mcp`.
 
 **From TypeScript** — the TS client talks to the REST API, so **start the server
 first** (see above; it defaults to `http://localhost:8000`). Then see
-[`clients/ts`](clients/ts) (`@notari/client`), a thin typed client mirroring the
+[`clients/ts`](clients/ts) (`@attestari/client`), a thin typed client mirroring the
 `Memory` surface.
 
-**With LangChain:** see [`clients/langchain`](clients/langchain) (`notari-langchain`)
-— a `NotariRetriever` (recall facts with provenance) and `NotariChatMessageHistory`
+**With LangChain:** see [`clients/langchain`](clients/langchain) (`attestari-langchain`)
+— a `AttestariRetriever` (recall facts with provenance) and `AttestariChatMessageHistory`
 (drop-in memory for `RunnableWithMessageHistory`) for any chain or agent.
 
 **With real Claude extraction** (instead of the zero-dep deterministic extractor):
@@ -235,7 +235,7 @@ cryptographic erasure). Encryption is opt-in via a root key-encryption key
 Mint a KEK once and set it in the environment:
 ```bash
 pip install -e ".[crypto]"
-export NOTARI_KEK=$(python -c "from notari.crypto import generate_kek; print(generate_kek())")
+export ATTESTARI_KEK=$(python -c "from attestari.crypto import generate_kek; print(generate_kek())")
 ```
 Now each subject's PII is encrypted at rest under a per-subject key, and
 `forget()` destroys that key — the ciphertext is unrecoverable, while the audit
@@ -249,14 +249,14 @@ boundary in [docs/the-moat.md](docs/the-moat.md).
 
 **Deploying for real.** A production checklist:
 - **Storage:** use `Memory.postgres()` (concurrent access); apply the schema with
-  `python -m notari.initdb "$NOTARI_DATABASE_URL"`. `Memory.local()` (SQLite) is
+  `python -m attestari.initdb "$ATTESTARI_DATABASE_URL"`. `Memory.local()` (SQLite) is
   single-process — great for one agent or an MCP server, not a shared service.
 - **Server:** run under a process manager, e.g.
-  `uvicorn notari.server:app --host 0.0.0.0 --port 8000 --workers 4` behind a
+  `uvicorn attestari.server:app --host 0.0.0.0 --port 8000 --workers 4` behind a
   reverse proxy; put your own auth in front (the API ships without auth).
 - **Extraction & embeddings:** set `ANTHROPIC_API_KEY` (extraction auto-upgrades
   to Claude) and install `[embeddings]` for real semantic vectors.
-- **Keys:** inject `NOTARI_KEK` from a KMS/secrets manager as an env var — never
+- **Keys:** inject `ATTESTARI_KEK` from a KMS/secrets manager as an env var — never
   bake it into an image or the DB. Back the `keyring` table up on a separate,
   short-retention policy (or rotate the KEK) so a restored data backup can't
   resurrect a shredded subject — see [docs/the-moat.md](docs/the-moat.md).
@@ -268,7 +268,7 @@ boundary in [docs/the-moat.md](docs/the-moat.md).
 
 ## REST API
 
-`uvicorn notari.server:app` serves:
+`uvicorn attestari.server:app` serves:
 
 | Method & path | Purpose |
 |---|---|
@@ -289,12 +289,12 @@ boundary in [docs/the-moat.md](docs/the-moat.md).
 
 | Variable | Effect |
 |---|---|
-| `NOTARI_DATABASE_URL` | Postgres DSN; the server/MCP use Postgres instead of local SQLite. |
-| `NOTARI_SQLITE_PATH` | Where `Memory.local()`-backed server/MCP keep the SQLite file (default `~/.notari/notari.db`). |
-| `NOTARI_KEK` | Root key-encryption key; turns on crypto-shred deletion. |
-| `NOTARI_PG_PORT` | Host port for the bundled `docker compose` Postgres (default 5432). |
+| `ATTESTARI_DATABASE_URL` | Postgres DSN; the server/MCP use Postgres instead of local SQLite. |
+| `ATTESTARI_SQLITE_PATH` | Where `Memory.local()`-backed server/MCP keep the SQLite file (default `~/.attestari/attestari.db`). |
+| `ATTESTARI_KEK` | Root key-encryption key; turns on crypto-shred deletion. |
+| `ATTESTARI_PG_PORT` | Host port for the bundled `docker compose` Postgres (default 5432). |
 | `ANTHROPIC_API_KEY` | Enables Claude fact extraction — the server/MCP upgrade from the regex extractor automatically. |
-| `NOTARI_EXTRACTOR_MODEL` | Override the extraction model (default `claude-opus-4-8`). |
+| `ATTESTARI_EXTRACTOR_MODEL` | Override the extraction model (default `claude-opus-4-8`). |
 
 **Install extras** (`pip install -e ".[extra]"`):
 
@@ -321,14 +321,14 @@ It adversarially proves all three differentiators: a silently rewritten fact is
 **caught at the exact seq** by `verify_audit(deep=True)`; a crypto-shredded
 subject's ciphertext is **provably unrecoverable** while the audit proof survives;
 and a corrected fact is queryable in the past without erasing history. (Runs on a
-bare clone; `pip install "notari[crypto]"` upgrades claim 2 from logical erasure to
+bare clone; `pip install "attestari[crypto]"` upgrades claim 2 from logical erasure to
 cryptographic crypto-shred.) See
 [docs/the-moat.md](docs/the-moat.md) for the threat model and honest boundaries.
 
 For the full crypto-shred against a real encrypted Postgres row:
 
 ```bash
-NOTARI_DATABASE_URL=postgresql://notari:notari@localhost:5433/notari \
+ATTESTARI_DATABASE_URL=postgresql://attestari:attestari@localhost:5433/attestari \
     python examples/audit_and_forget_demo.py   # audit -> trace -> forget -> PROVE
 ```
 It shows: a fact traced to its source, a subject forgotten, the raw row confirmed
@@ -348,22 +348,22 @@ fall out of the design instead of being bolted on.
 ## Project layout
 
 ```
-src/notari/         the engine — events, store, projection, retrieve, memory,
+src/attestari/         the engine — events, store, projection, retrieve, memory,
                     crypto (shred), audit (hash chain), predicates, resolver
-src/notari/server.py, console.py   FastAPI REST API + the graph console
-src/notari/mcp.py   the MCP server
+src/attestari/server.py, console.py   FastAPI REST API + the graph console
+src/attestari/mcp.py   the MCP server
 examples/           runnable demos — start with spike.py
 eval/               quality + retrieval-latency harness
-clients/ts/         the TypeScript SDK (@notari/client)
-clients/langchain/  the LangChain integration (notari-langchain)
-src/notari/db/schema.sql       the Postgres bi-temporal schema
+clients/ts/         the TypeScript SDK (@attestari/client)
+clients/langchain/  the LangChain integration (attestari-langchain)
+src/attestari/db/schema.sql       the Postgres bi-temporal schema
 docker-compose.yml  Postgres + pgvector
 ```
 
 ## Docs & contributing
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — the design
-- [LEARN.md](LEARN.md) — how Notari works, from scratch
+- [LEARN.md](LEARN.md) — how Attestari works, from scratch
 - [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup, good first issues
 - [SECURITY.md](SECURITY.md) — reporting vulnerabilities
 

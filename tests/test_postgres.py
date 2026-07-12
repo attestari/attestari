@@ -1,12 +1,12 @@
 """Postgres adapter integration tests (materialised projections + SQL retrieval).
 
-Skipped unless NOTARI_DATABASE_URL points at a live Postgres (the
+Skipped unless ATTESTARI_DATABASE_URL points at a live Postgres (the
 docker-compose one). These exercise the real pgvector + full-text retrieval path
 via Memory.postgres(), durability across fresh engines, projection
 materialisation, forget, and certificate persistence.
 
-    NOTARI_PG_PORT=5433 docker compose up -d
-    NOTARI_DATABASE_URL=postgresql://notari:notari@localhost:5433/notari \
+    ATTESTARI_PG_PORT=5433 docker compose up -d
+    ATTESTARI_DATABASE_URL=postgresql://attestari:attestari@localhost:5433/attestari \
         python -m pytest tests/test_postgres.py -q
 """
 
@@ -16,14 +16,14 @@ import os
 
 import pytest
 
-from notari import Memory
+from attestari import Memory
 
-DSN = os.environ.get("NOTARI_DATABASE_URL")
-pytestmark = pytest.mark.skipif(not DSN, reason="set NOTARI_DATABASE_URL to run Postgres tests")
+DSN = os.environ.get("ATTESTARI_DATABASE_URL")
+pytestmark = pytest.mark.skipif(not DSN, reason="set ATTESTARI_DATABASE_URL to run Postgres tests")
 
 
 def _reset() -> None:
-    from notari import PostgresEventStore
+    from attestari import PostgresEventStore
 
     store = PostgresEventStore(DSN)
     store.truncate()
@@ -65,7 +65,7 @@ def test_postgres_materializes_edges_with_embeddings() -> None:
     mem = Memory.postgres(DSN)
     mem.add("My name is Dana. I live in Delhi.", subject_id="u1", valid_from="2019-01-01")
 
-    from notari import PostgresEventStore
+    from attestari import PostgresEventStore
 
     store = PostgresEventStore(DSN)
     n = store._conn.execute(
@@ -86,7 +86,7 @@ def test_postgres_forget_persists_certificate_and_isolates() -> None:
     assert cert.facts_deleted >= 2
 
     # The certificate is persisted (proof retained).
-    from notari import PostgresEventStore
+    from attestari import PostgresEventStore
 
     store = PostgresEventStore(DSN)
     row = store._conn.execute(
@@ -105,7 +105,7 @@ def test_postgres_forget_persists_certificate_and_isolates() -> None:
 def test_initdb_is_packaged_and_idempotent() -> None:
     """The schema ships inside the package (pip-only users need no clone), and
     applying it to an already-initialised database is a no-op, not an error."""
-    from notari.initdb import init_db, schema_sql
+    from attestari.initdb import init_db, schema_sql
 
     sql = schema_sql()
     assert "CREATE TABLE IF NOT EXISTS episode" in sql

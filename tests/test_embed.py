@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-import notari.embed as embed
-from notari import HashEmbedder
+import attestari.embed as embed
+from attestari import HashEmbedder
 
 
 def test_default_embedder_falls_back_to_hash(monkeypatch: pytest.MonkeyPatch) -> None:

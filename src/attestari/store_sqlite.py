@@ -47,7 +47,7 @@ from .events import (
     SubjectForgotten,
 )
 
-DEFAULT_PATH = "~/.notari/notari.db"
+DEFAULT_PATH = "~/.attestari/attestari.db"
 
 _EVENT_TYPES: dict[str, type] = {
     "episode_ingested": EpisodeIngested,
@@ -168,7 +168,7 @@ class SQLiteEventStore:
             );
             """
         )
-        # Encryption is opt-in: EnvelopeCipher when NOTARI_KEK is set, else NullCipher.
+        # Encryption is opt-in: EnvelopeCipher when ATTESTARI_KEK is set, else NullCipher.
         self.cipher = cipher or cipher_from_env()
         self._keys = KeyManager(self.cipher, _SQLiteKeyring(self._conn, self._lock))
 

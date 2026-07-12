@@ -15,7 +15,7 @@ import pytest
 
 pytest.importorskip("cryptography")
 
-from notari import (  # noqa: E402
+from attestari import (  # noqa: E402
     EnvelopeCipher,
     InMemoryEventStore,
     Memory,
@@ -23,7 +23,7 @@ from notari import (  # noqa: E402
     generate_kek,
     verify_certificate,
 )
-from notari.crypto import CERT_ALGORITHM  # noqa: E402
+from attestari.crypto import CERT_ALGORITHM  # noqa: E402
 
 
 def _signed_forget(store) -> tuple:

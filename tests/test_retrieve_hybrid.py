@@ -13,10 +13,10 @@ from datetime import datetime, timezone
 
 import pytest
 
-from notari import HashEmbedder, Memory
-from notari.events import FactAsserted
-from notari.projection import Projector
-from notari.retrieve import search, weights_for
+from attestari import HashEmbedder, Memory
+from attestari.events import FactAsserted
+from attestari.projection import Projector
+from attestari.retrieve import search, weights_for
 
 
 class _VecEmbedder:
@@ -123,17 +123,17 @@ def test_deterministic_tiebreak_established_then_fact_id() -> None:
     assert porto == ["f-a", "f-b"]  # then fact_id asc
 
 
-DSN = os.environ.get("NOTARI_DATABASE_URL")
+DSN = os.environ.get("ATTESTARI_DATABASE_URL")
 
 
-@pytest.mark.skipif(not DSN, reason="set NOTARI_DATABASE_URL to run Postgres tests")
+@pytest.mark.skipif(not DSN, reason="set ATTESTARI_DATABASE_URL to run Postgres tests")
 def test_backend_ranking_parity() -> None:
     """The same clear-cut queries rank the same facts first on both backends.
 
     (The keyword scorers differ — token overlap vs ts_rank — so parity is
     asserted on unambiguous fixtures, not arbitrary corpora.)
     """
-    from notari import PostgresEventStore
+    from attestari import PostgresEventStore
 
     store = PostgresEventStore(DSN)
     store.truncate()

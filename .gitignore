@@ -21,7 +21,7 @@ htmlcov/
 *.sqlite
 *.db
 eval/data/
-.notari/
+.attestari/
 
 # Internal planning / strategy docs — never publish
 internal/

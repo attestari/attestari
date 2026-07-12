@@ -1,11 +1,11 @@
-"""MCP server — expose Notari to any agent framework that speaks MCP.
+"""MCP server — expose Attestari to any agent framework that speaks MCP.
 
 This is the distribution surface: an MCP-speaking agent (Claude, frameworks) can
 remember, recall, trace provenance, and forget — over stdio.
 
-    pip install "notari[server,postgres,crypto]"   # 'server' includes mcp
-    NOTARI_DATABASE_URL=postgresql://notari:notari@localhost:5433/notari \
-        python -m notari.mcp
+    pip install "attestari[server,postgres,crypto]"   # 'server' includes mcp
+    ATTESTARI_DATABASE_URL=postgresql://attestari:attestari@localhost:5433/attestari \
+        python -m attestari.mcp
 
 The tool *logic* lives in plain `tool_*` functions (unit-testable without the mcp
 package); `create_server` registers thin MCP wrappers around them.
@@ -24,18 +24,18 @@ def _memory() -> Memory:
     # client app (Claude Desktop restarts => new process), so ephemeral
     # storage would silently lose all memories on every app restart — the
     # opposite of a long-term memory product. Postgres when
-    # NOTARI_DATABASE_URL is set; else a local SQLite file
-    # (NOTARI_SQLITE_PATH or ~/.notari/notari.db). Extraction upgrades to
+    # ATTESTARI_DATABASE_URL is set; else a local SQLite file
+    # (ATTESTARI_SQLITE_PATH or ~/.attestari/attestari.db). Extraction upgrades to
     # Claude automatically when ANTHROPIC_API_KEY is set.
     from .embed import default_embedder
     from .extract import default_extractor
 
     embedder = default_embedder()
     extractor = default_extractor()
-    if os.environ.get("NOTARI_DATABASE_URL"):
+    if os.environ.get("ATTESTARI_DATABASE_URL"):
         return Memory.postgres(embedder=embedder, extractor=extractor)
     return Memory.local(
-        os.environ.get("NOTARI_SQLITE_PATH"), embedder=embedder, extractor=extractor
+        os.environ.get("ATTESTARI_SQLITE_PATH"), embedder=embedder, extractor=extractor
     )
 
 
@@ -118,7 +118,7 @@ def create_server(memory: Memory | None = None):
     from mcp.server.fastmcp import FastMCP
 
     mem = memory or _memory()
-    server = FastMCP("notari")
+    server = FastMCP("attestari")
 
     @server.tool()
     def add_memory(

@@ -11,16 +11,16 @@ jobs:
       postgres:
         image: pgvector/pgvector:pg16
         env:
-          POSTGRES_USER: notari
-          POSTGRES_PASSWORD: notari
-          POSTGRES_DB: notari
+          POSTGRES_USER: attestari
+          POSTGRES_PASSWORD: attestari
+          POSTGRES_DB: attestari
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U notari -d notari"
+          --health-cmd "pg_isready -U attestari -d attestari"
           --health-interval 5s --health-timeout 3s --health-retries 10
     env:
-      NOTARI_DATABASE_URL: postgresql://notari:notari@localhost:5432/notari
+      ATTESTARI_DATABASE_URL: postgresql://attestari:attestari@localhost:5432/attestari
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -33,7 +33,7 @@ jobs:
         run: python examples/spike.py
 
       - name: Apply Postgres schema
-        run: psql "$NOTARI_DATABASE_URL" -f src/notari/db/schema.sql
+        run: psql "$ATTESTARI_DATABASE_URL" -f src/attestari/db/schema.sql
 
       - name: Install (dev + postgres + server)
         run: |

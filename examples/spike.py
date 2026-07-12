@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Notari de-risking spike.
+"""Attestari de-risking spike.
 
 Proves the whole architecture loop end to end with ZERO dependencies and no API
 key: ingest -> extract -> append events -> project -> bi-temporal recall ->
@@ -17,10 +17,10 @@ import argparse
 import sys
 from pathlib import Path
 
-# Make `notari` importable without installing (src layout).
+# Make `attestari` importable without installing (src layout).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from notari import AnthropicExtractor, DeterministicExtractor, Memory  # noqa: E402
+from attestari import AnthropicExtractor, DeterministicExtractor, Memory  # noqa: E402
 
 SUBJECT = "user_42"
 
@@ -30,7 +30,7 @@ def rule(title: str) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Notari spike")
+    parser = argparse.ArgumentParser(description="Attestari spike")
     parser.add_argument("--llm", choices=["deterministic", "anthropic"], default="deterministic")
     args = parser.parse_args()
 

@@ -1,7 +1,7 @@
 # The moat, proven
 
 Most memory layers ask you to *trust* that a fact came from somewhere, that a
-deletion happened, that history wasn't rewritten. Notari's differentiators are
+deletion happened, that history wasn't rewritten. Attestari's differentiators are
 **properties you can break on purpose and watch get caught** — not marketing
 bullets. This page is written for a skeptic: every claim has a one-line command
 and an honest note on where the property ends.
@@ -45,7 +45,7 @@ which changes the head hash.
 
 **Honest boundary.** A full rewrite of the *whole* chain is internally
 self-consistent. Detecting *that* requires anchoring the head hash somewhere the
-operator can't rewrite (a periodic notarization / external witness). Notari gives
+operator can't rewrite (a periodic notarization / external witness). Attestari gives
 you a stable head hash to anchor; publishing it is a deployment step, not
 automatic. Also: `deep=True` checks content that is *present* — a sanctioned
 crypto-shred (below) removes content by design, so the default chain-only verify
@@ -76,7 +76,7 @@ chain: `verify_audit()` still returns ok. You get erasure **and** a durable proo
 it happened, including a **signed** `DeletionCertificate` (subject, requester,
 counts, manifest hash, timestamp). The signature is HMAC-SHA256 over the
 certificate's canonical payload under a key *derived* from the KEK
-(domain-separated from content encryption); `notari.crypto.verify_certificate`
+(domain-separated from content encryption); `attestari.crypto.verify_certificate`
 recomputes it, so a forged certificate — or a real one with any altered field —
 fails verification. It is symmetric by design: the KEK is already the
 deployment's root of trust, so hold it in a KMS and the signature is as strong
@@ -111,10 +111,10 @@ required. Two stores are the exceptions, and both get the same treatment:
   policy bucket as the keyring.
 
 This is a property of every crypto-shred system that also has to be searchable,
-not a Notari quirk — we'd rather you read it here than discover it in an audit.
+not an Attestari quirk — we'd rather you read it here than discover it in an audit.
 
 Crypto-shred requires encryption enabled — pass an `EnvelopeCipher` (as the
-demo does) or set `NOTARI_KEK`; this works with **either** the in-memory or
+demo does) or set `ATTESTARI_KEK`; this works with **either** the in-memory or
 the Postgres store, so the demo proves it end-to-end with no database. With no
 cipher (the zero-dependency default), `forget()` is a logical delete plus
 certificate — the content is dropped from all reads but not cryptographically
@@ -137,7 +137,7 @@ timeline retains history            ['Toronto', 'Berlin']
 ```
 
 **Why it holds.** Facts carry **valid-time** (`valid_from`/`valid_to`, true-in-world)
-separate from **system-time** (`recorded_at`, when Notari learned it). A correction
+separate from **system-time** (`recorded_at`, when Attestari learned it). A correction
 *supersedes* rather than deletes: the old fact's window is closed, the new one
 opens, and both remain in the timeline. `search(..., as_of=D)` filters to what was
 valid at instant D.
@@ -150,7 +150,7 @@ travel over (see the LOCOMO retrieval eval for that signal).
 
 ## Why this is the wedge
 
-| Property | Notari | supermemory / Mem0 / Zep |
+| Property | Attestari | supermemory / Mem0 / Zep |
 |---|---|---|
 | Provable deletion + certificate (GDPR Art. 17) | ✅ crypto-shred | ✗ (auto-expiry ≠ proof) |
 | Tamper-evident audit (edit/insert/delete caught) | ✅ hash chain + content check | ✗ |

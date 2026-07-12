@@ -16,8 +16,8 @@ import os
 
 import pytest
 
-from notari import Memory
-from notari.events import EpisodeIngested, FactAsserted
+from attestari import Memory
+from attestari.events import EpisodeIngested, FactAsserted
 
 
 def _seed() -> Memory:
@@ -41,7 +41,7 @@ def _tamper_first_fact(mem: Memory, **changes) -> int:
     ["char_span", "confidence", "valid_to", "recorded_at"],
 )
 def test_deep_verify_catches_field_tamper(field: str) -> None:
-    from notari.events import utcnow
+    from attestari.events import utcnow
 
     mem = _seed()
     changes = {
@@ -58,7 +58,7 @@ def test_deep_verify_catches_field_tamper(field: str) -> None:
 
 
 def test_deep_verify_catches_scope_retag() -> None:
-    from notari.events import Scope
+    from attestari.events import Scope
 
     mem = _seed()
     idx = _tamper_first_fact(mem, scope=Scope(subject_id="mallory"))
@@ -84,8 +84,8 @@ def test_deep_verify_catches_payload_edit_keeping_content_hash() -> None:
 
 def _crypto_mem() -> Memory:
     pytest.importorskip("cryptography")
-    from notari.crypto import EnvelopeCipher, generate_kek
-    from notari.store import InMemoryEventStore
+    from attestari.crypto import EnvelopeCipher, generate_kek
+    from attestari.store import InMemoryEventStore
 
     cipher = EnvelopeCipher(base64.b64decode(generate_kek()))
     store = InMemoryEventStore(cipher=cipher)
@@ -117,12 +117,12 @@ def test_deep_verify_flags_rogue_key_deletion() -> None:
 
 # --- gap 1: Postgres append-order regression -------------------------------- #
 
-DSN = os.environ.get("NOTARI_DATABASE_URL")
-pg = pytest.mark.skipif(not DSN, reason="set NOTARI_DATABASE_URL to run Postgres tests")
+DSN = os.environ.get("ATTESTARI_DATABASE_URL")
+pg = pytest.mark.skipif(not DSN, reason="set ATTESTARI_DATABASE_URL to run Postgres tests")
 
 
 def _pg_reset() -> None:
-    from notari import PostgresEventStore
+    from attestari import PostgresEventStore
 
     store = PostgresEventStore(DSN)
     store.truncate()
@@ -157,9 +157,9 @@ def test_postgres_deep_verify_catches_sql_tamper() -> None:
 @pg
 def test_postgres_deep_verify_survives_shred(monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("cryptography")
-    from notari.crypto import generate_kek
+    from attestari.crypto import generate_kek
 
-    monkeypatch.setenv("NOTARI_KEK", generate_kek())
+    monkeypatch.setenv("ATTESTARI_KEK", generate_kek())
     _pg_reset()
     mem = Memory.postgres(DSN)
     mem.add("My name is Dana. I live in Delhi.", subject_id="u1", valid_from="2019-01-01")

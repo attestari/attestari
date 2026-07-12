@@ -33,9 +33,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from notari import AnthropicExtractor, HashEmbedder, Memory  # noqa: E402
-from notari.events import Scope  # noqa: E402
-from notari.extract import ExtractedFact  # noqa: E402
+from attestari import AnthropicExtractor, HashEmbedder, Memory  # noqa: E402
+from attestari.events import Scope  # noqa: E402
+from attestari.extract import ExtractedFact  # noqa: E402
 
 
 def _session_date(label: str | None, fallback_idx: int) -> str:
@@ -205,7 +205,7 @@ def main() -> int:
         if name == "hash":
             emb = HashEmbedder()
         elif name == "st":
-            from notari import SentenceTransformerEmbedder
+            from attestari import SentenceTransformerEmbedder
 
             emb = SentenceTransformerEmbedder()
         else:

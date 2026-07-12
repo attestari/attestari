@@ -4,7 +4,7 @@ Ingests N subjects, runs Q searches, and reports p50/p95 retrieval latency.
 Fails (exit 1) if p95 exceeds --target-ms.
 
     python -m eval.bench --engine memory
-    NOTARI_DATABASE_URL=postgresql://notari:notari@localhost:5433/notari \
+    ATTESTARI_DATABASE_URL=postgresql://attestari:attestari@localhost:5433/attestari \
         python -m eval.bench --engine postgres --subjects 50 --queries 200
 """
 
@@ -17,12 +17,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from notari import Memory  # noqa: E402
+from attestari import Memory  # noqa: E402
 
 
 def _build(engine: str, subjects: int) -> Memory:
     if engine == "postgres":
-        from notari import PostgresEventStore
+        from attestari import PostgresEventStore
 
         reset = PostgresEventStore()
         reset.truncate()
@@ -49,7 +49,7 @@ def _percentile(values: list[float], pct: float) -> float:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Notari retrieval latency benchmark")
+    ap = argparse.ArgumentParser(description="Attestari retrieval latency benchmark")
     ap.add_argument("--engine", choices=["memory", "postgres"], default="memory")
     ap.add_argument("--subjects", type=int, default=200)
     ap.add_argument("--queries", type=int, default=500)

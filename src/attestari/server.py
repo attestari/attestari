@@ -1,8 +1,8 @@
 """FastAPI server — the HTTP surface for the engine.
 
-    pip install "notari[server,postgres]"
-    NOTARI_DATABASE_URL=postgresql://notari:notari@localhost:5433/notari \
-        uvicorn notari.server:app --reload
+    pip install "attestari[server,postgres]"
+    ATTESTARI_DATABASE_URL=postgresql://attestari:attestari@localhost:5433/attestari \
+        uvicorn attestari.server:app --reload
 
 Endpoints:
     POST /v1/add                 ingest a message
@@ -35,18 +35,18 @@ def _default_memory() -> Memory:
     # Deployment defaults — "set the env var, get production behaviour":
     # real embeddings when the extra is installed; Claude extraction when
     # ANTHROPIC_API_KEY is set; durable storage — Postgres when
-    # NOTARI_DATABASE_URL is set, else a local SQLite file (NOTARI_SQLITE_PATH
-    # or ~/.notari/notari.db). A memory server whose memory vanishes on restart
+    # ATTESTARI_DATABASE_URL is set, else a local SQLite file (ATTESTARI_SQLITE_PATH
+    # or ~/.attestari/attestari.db). A memory server whose memory vanishes on restart
     # is a broken promise; the ephemeral store stays via create_app(Memory()).
     from .embed import default_embedder
     from .extract import default_extractor
 
     embedder = default_embedder()
     extractor = default_extractor()
-    if os.environ.get("NOTARI_DATABASE_URL"):
+    if os.environ.get("ATTESTARI_DATABASE_URL"):
         return Memory.postgres(embedder=embedder, extractor=extractor)
     return Memory.local(
-        os.environ.get("NOTARI_SQLITE_PATH"), embedder=embedder, extractor=extractor
+        os.environ.get("ATTESTARI_SQLITE_PATH"), embedder=embedder, extractor=extractor
     )
 
 
@@ -110,7 +110,7 @@ class AddRequest(BaseModel):
 def create_app(memory: Memory | None = None) -> FastAPI:
     mem = memory or _default_memory()
     app = FastAPI(
-        title="Notari",
+        title="Attestari",
         version="0.0.1",
         description=(
             "**The auditable memory layer for AI agents.** Every fact carries a "
@@ -201,12 +201,12 @@ def create_app(memory: Memory | None = None) -> FastAPI:
     )
     def forget(subject_id: str, requested_by: str = "system") -> dict[str, Any]:
         """Erase one subject's entire scope (GDPR Art. 17). With encryption
-        enabled (`NOTARI_KEK`), their per-subject key is **destroyed**, so the
+        enabled (`ATTESTARI_KEK`), their per-subject key is **destroyed**, so the
         retained ciphertext is unrecoverable — including in backups of the
         event log. Returns a `DeletionCertificate` (counts + manifest hash):
-        the proof that survives after the data is gone. With `NOTARI_KEK` set
+        the proof that survives after the data is gone. With `ATTESTARI_KEK` set
         the certificate is **signed** (HMAC-SHA256 under a KEK-derived key —
-        verify offline with `notari.crypto.verify_certificate`); without it,
+        verify offline with `attestari.crypto.verify_certificate`); without it,
         `signature` is null. The audit chain remains verifiable either way.
         """
         cert = mem.forget(subject_id, requested_by=requested_by)
@@ -266,7 +266,7 @@ def create_app(memory: Memory | None = None) -> FastAPI:
             nodes.setdefault(e.object, {"id": e.object, "label": e.object, "kind": "value"})
         return {"nodes": list(nodes.values()), "edges": [_edge_dict(e) for e in edges]}
 
-    @app.get("/", response_class=HTMLResponse, summary="The Notari console", include_in_schema=True)
+    @app.get("/", response_class=HTMLResponse, summary="The Attestari console", include_in_schema=True)
     def console() -> str:
         """A single self-contained page: the memory graph with a time-travel
         slider, click-to-trace provenance, and a forget button."""
@@ -277,5 +277,5 @@ def create_app(memory: Memory | None = None) -> FastAPI:
     return app
 
 
-# Module-level app for `uvicorn notari.server:app`.
+# Module-level app for `uvicorn attestari.server:app`.
 app = create_app()

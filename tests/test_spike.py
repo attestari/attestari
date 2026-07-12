@@ -5,7 +5,7 @@ Run with `python -m pytest -q` (pyproject sets pythonpath=src).
 
 from __future__ import annotations
 
-from notari import Memory
+from attestari import Memory
 
 
 def _seed() -> Memory:

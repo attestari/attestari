@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live MCP demo: act as an MCP *client*, launch the Notari MCP server over
+"""Live MCP demo: act as an MCP *client*, launch the Attestari MCP server over
 stdio, discover its tools, and call them — exactly what an AI agent does.
 
     .venv/bin/python examples/mcp_client_demo.py
@@ -26,10 +26,10 @@ def _result_text(result) -> str:
 
 async def main() -> None:
     env = {**os.environ, "PYTHONPATH": os.path.join(ROOT, "src")}
-    env.pop("NOTARI_DATABASE_URL", None)  # use the in-memory engine for the demo
-    env.pop("NOTARI_KEK", None)
+    env.pop("ATTESTARI_DATABASE_URL", None)  # use the in-memory engine for the demo
+    env.pop("ATTESTARI_KEK", None)
 
-    params = StdioServerParameters(command=PY, args=["-m", "notari.mcp"], env=env)
+    params = StdioServerParameters(command=PY, args=["-m", "attestari.mcp"], env=env)
 
     # The client launches the server as a subprocess and talks to it over stdio.
     async with stdio_client(params) as (read, write):

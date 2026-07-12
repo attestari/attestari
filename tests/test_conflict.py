@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from notari import Memory
+from attestari import Memory
 
 
 def test_multivalued_predicates_coexist() -> None:

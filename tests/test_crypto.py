@@ -6,11 +6,11 @@ import base64
 
 import pytest
 
-from notari.crypto import NullCipher, cipher_from_env, generate_kek
+from attestari.crypto import NullCipher, cipher_from_env, generate_kek
 
 pytest.importorskip("cryptography")
 
-from notari.crypto import EnvelopeCipher  # noqa: E402
+from attestari.crypto import EnvelopeCipher  # noqa: E402
 
 
 def _cipher() -> EnvelopeCipher:
@@ -57,7 +57,7 @@ def test_null_cipher_is_passthrough() -> None:
 
 
 def test_cipher_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("NOTARI_KEK", raising=False)
+    monkeypatch.delenv("ATTESTARI_KEK", raising=False)
     assert not cipher_from_env().enabled
-    monkeypatch.setenv("NOTARI_KEK", generate_kek())
+    monkeypatch.setenv("ATTESTARI_KEK", generate_kek())
     assert cipher_from_env().enabled

@@ -5,7 +5,7 @@
   first-person patterns, which is plenty to exercise assertion, supersession,
   bi-temporal recall, and deletion.
 * AnthropicExtractor — real fact extraction with Claude via structured outputs.
-  This is the production path; it needs `pip install notari[anthropic]` and an
+  This is the production path; it needs `pip install attestari[anthropic]` and an
   ANTHROPIC_API_KEY.
 """
 
@@ -83,7 +83,7 @@ def default_extractor() -> Extractor:
     of `embed.default_embedder()`.
 
     Claude (`AnthropicExtractor`) when the `anthropic` extra is installed AND
-    `ANTHROPIC_API_KEY` is set (model overridable via `NOTARI_EXTRACTOR_MODEL`);
+    `ANTHROPIC_API_KEY` is set (model overridable via `ATTESTARI_EXTRACTOR_MODEL`);
     otherwise the zero-dependency `DeterministicExtractor`. Deployment entry
     points (the REST server, MCP) use this, so "set the env var, get production
     extraction" holds without writing code. Bare `Memory()` stays deterministic.
@@ -92,7 +92,7 @@ def default_extractor() -> Extractor:
         try:
             import anthropic  # noqa: F401 - presence check only
 
-            model = os.environ.get("NOTARI_EXTRACTOR_MODEL")
+            model = os.environ.get("ATTESTARI_EXTRACTOR_MODEL")
             return AnthropicExtractor(model=model) if model else AnthropicExtractor()
         except ImportError:
             pass

@@ -1,6 +1,6 @@
-# Contributing to Notari
+# Contributing to Attestari
 
-Thanks for your interest! Notari is the **auditable memory layer for AI agents** —
+Thanks for your interest! Attestari is the **auditable memory layer for AI agents** —
 event-sourced, bi-temporal, with provable deletion and a tamper-evident audit
 chain. New to the codebase? Read [LEARN.md](LEARN.md) — it explains the whole
 design from scratch.
@@ -8,13 +8,13 @@ design from scratch.
 ## Dev setup
 
 ```bash
-git clone https://github.com/notarihq/notari && cd notari
+git clone https://github.com/attestari/attestari && cd attestari
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev,postgres,server,crypto,embeddings]"
 
 # Postgres (for the durable-store tests) — optional:
-NOTARI_PG_PORT=5433 docker compose up -d
-export NOTARI_DATABASE_URL=postgresql://notari:notari@localhost:5433/notari
+ATTESTARI_PG_PORT=5433 docker compose up -d
+export ATTESTARI_DATABASE_URL=postgresql://attestari:attestari@localhost:5433/attestari
 ```
 
 ## Run the checks

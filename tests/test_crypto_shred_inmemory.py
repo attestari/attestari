@@ -14,8 +14,8 @@ import pytest
 
 pytest.importorskip("cryptography")
 
-from notari import EnvelopeCipher, InMemoryEventStore, Memory, generate_kek  # noqa: E402
-from notari.events import EpisodeIngested  # noqa: E402
+from attestari import EnvelopeCipher, InMemoryEventStore, Memory, generate_kek  # noqa: E402
+from attestari.events import EpisodeIngested  # noqa: E402
 
 
 def _encrypting_memory() -> tuple[Memory, InMemoryEventStore]:

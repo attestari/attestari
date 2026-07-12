@@ -1,6 +1,6 @@
 # Architecture
 
-Notari is an **event-sourced, bi-temporal memory engine** with a **hexagonal**
+Attestari is an **event-sourced, bi-temporal memory engine** with a **hexagonal**
 (ports-and-adapters) shape. It runs in-memory with zero dependencies, or durably
 on Postgres + pgvector — the same engine, the same guarantees, behind swappable
 adapters.
@@ -66,7 +66,7 @@ adapter and change nothing else.
 
 ## The event log
 
-Every write is an immutable, totally-ordered event ([events.py](src/notari/events.py)):
+Every write is an immutable, totally-ordered event ([events.py](src/attestari/events.py)):
 
 | Event | Meaning |
 |---|---|
@@ -86,7 +86,7 @@ Each fact lives on two independent time axes:
 | Axis | Field | Question it answers |
 |---|---|---|
 | **Valid time** | `valid_from` / `valid_to` | When was this true *in the world*? |
-| **System time** | `tx_from` / `tx_to` | When did *Notari* know it? |
+| **System time** | `tx_from` / `tx_to` | When did *Attestari* know it? |
 
 A correction ("actually they moved in March") is a **new** assertion plus an
 invalidation of the old one. The old fact is never edited or deleted — only its
@@ -96,7 +96,7 @@ default is "now."
 
 ## Retrieval
 
-Hybrid, with time built in ([retrieve.py](src/notari/retrieve.py)):
+Hybrid, with time built in ([retrieve.py](src/attestari/retrieve.py)):
 
 1. **semantic** — cosine similarity over fact embeddings (pgvector HNSW on Postgres);
 2. **keyword** — lexical token overlap (Postgres full-text ranking on the durable path);
@@ -116,31 +116,31 @@ the single top object.
 ## Storage backends
 
 The write side is an **`EventStore`** port with three adapters — in-memory
-([store.py](src/notari/store.py)), a single local SQLite file
-([store_sqlite.py](src/notari/store_sqlite.py), stdlib only: durable with zero
+([store.py](src/attestari/store.py)), a single local SQLite file
+([store_sqlite.py](src/attestari/store_sqlite.py), stdlib only: durable with zero
 infrastructure, for single-process agents and MCP), and Postgres
-([store_postgres.py](src/notari/store_postgres.py)). All three share the same
+([store_postgres.py](src/attestari/store_postgres.py)). All three share the same
 audit-chain and key-lifecycle components, so the guarantees cannot drift
 between tiers.
 
 The read/query side sits behind a **`ProjectionBackend`** port
-([backend.py](src/notari/backend.py)) with two implementations:
+([backend.py](src/attestari/backend.py)) with two implementations:
 
 - **`InMemoryProjectionBackend`** — folds the event log on every read (used by
   the in-memory and SQLite tiers). Zero dependencies and fully deterministic;
   this is the reference behaviour the other backend is checked against.
-- **`PostgresProjectionBackend`** ([store_postgres.py](src/notari/store_postgres.py))
+- **`PostgresProjectionBackend`** ([store_postgres.py](src/attestari/store_postgres.py))
   — a durable **`PostgresEventStore`** plus **materialised** `entity`/`edge`
   projection tables (rebuildable from the log), with **hybrid retrieval evaluated
   in SQL**: pgvector cosine + Postgres full-text + the bi-temporal `as_of` filter.
-  This lights up the HNSW index defined in [src/notari/db/schema.sql](src/notari/db/schema.sql).
+  This lights up the HNSW index defined in [src/attestari/db/schema.sql](src/attestari/db/schema.sql).
 
 `Memory.postgres()` wires the durable store and backend together. The whole thing
 runs on **one Postgres + pgvector container — no graph database required.**
 
 ## Deletion / right-to-be-forgotten
 
-`forget(subject_id)` ([memory.py](src/notari/memory.py)):
+`forget(subject_id)` ([memory.py](src/attestari/memory.py)):
 
 1. appends a `SubjectForgotten` event;
 2. rebuilds the projections, dropping every episode and fact in that subject's
@@ -150,17 +150,17 @@ runs on **one Postgres + pgvector container — no graph database required.**
 
 You keep the certificate as proof it happened; the content is gone.
 
-**Crypto-shred** ([crypto.py](src/notari/crypto.py)) makes that erasure provable
+**Crypto-shred** ([crypto.py](src/attestari/crypto.py)) makes that erasure provable
 even against backups: each subject's PII is encrypted at rest with a per-subject
 data key (wrapped under a root KEK). `forget()` destroys the data key, so the
 ciphertext is permanently unrecoverable while the immutable rows and the signed
 certificate remain. This resolves the usual tension between event sourcing ("never
-delete") and erasure ("delete on request"). Opt in via the `NOTARI_KEK`
+delete") and erasure ("delete on request"). Opt in via the `ATTESTARI_KEK`
 environment variable.
 
 ## Tamper-evident audit chain
 
-Every event is hash-linked ([audit.py](src/notari/audit.py)):
+Every event is hash-linked ([audit.py](src/attestari/audit.py)):
 `entry_hash = H(prev_hash || payload_hash)`. `verify_audit()` walks the chain and
 detects any edit, insertion, or deletion. Because the chain hashes *content
 digests* — not raw payloads — **the proof survives crypto-shred**: you can still
@@ -168,11 +168,11 @@ verify the history wasn't altered after a subject's content has been destroyed.
 
 ## Conflict resolution & entity resolution
 
-- **Predicate cardinality** ([predicates.py](src/notari/predicates.py)) —
+- **Predicate cardinality** ([predicates.py](src/attestari/predicates.py)) —
   predicates are single-valued (`lives_in`, `works_at` — a new value supersedes
   the old) or multi-valued (`uses_tool` — values coexist). `conflicts()` surfaces
   resolved conflicts rather than hiding them.
-- **Entity resolution** ([resolver.py](src/notari/resolver.py)) — a
+- **Entity resolution** ([resolver.py](src/attestari/resolver.py)) — a
   candidate → score → merge pipeline with auto-merge and human-review bands;
   every merge is reversible via `EntityUnmerged`.
 
@@ -180,11 +180,11 @@ verify the history wasn't altered after a subject's content has been destroyed.
 
 The same engine is exposed four ways:
 
-- **Python facade** — `from notari import Memory` ([memory.py](src/notari/memory.py)).
-- **REST API + console** — a FastAPI app ([server.py](src/notari/server.py)) at
-  `/v1/*`, with a zero-build graph console ([console.py](src/notari/console.py))
+- **Python facade** — `from attestari import Memory` ([memory.py](src/attestari/memory.py)).
+- **REST API + console** — a FastAPI app ([server.py](src/attestari/server.py)) at
+  `/v1/*`, with a zero-build graph console ([console.py](src/attestari/console.py))
   served at `/`.
-- **MCP server** ([mcp.py](src/notari/mcp.py)) — `add_memory`, `search_memory`,
+- **MCP server** ([mcp.py](src/attestari/mcp.py)) — `add_memory`, `search_memory`,
   `get_provenance`, `forget_subject` for any agent that speaks MCP.
 - **TypeScript SDK** ([clients/ts](clients/ts)) — a thin typed client mirroring
   the `Memory` surface over the REST API.

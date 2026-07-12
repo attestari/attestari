@@ -20,8 +20,8 @@ from pathlib import Path
 
 import pytest
 
-from notari import HashEmbedder, Memory, SQLiteEventStore
-from notari.events import (
+from attestari import HashEmbedder, Memory, SQLiteEventStore
+from attestari.events import (
     EntityMerged,
     EntityUnmerged,
     EpisodeIngested,
@@ -147,7 +147,7 @@ def test_naive_datetime_round_trip_still_deep_verifies(tmp_path: Path) -> None:
             source_episode_id="ep-x", valid_from=naive, recorded_at=naive,
         )
     )
-    from notari.audit import verify
+    from attestari.audit import verify
 
     assert verify(store.events(), store.audit_entries()).ok
     store.close()
@@ -159,7 +159,7 @@ def _crypto_store(path: Path) -> SQLiteEventStore:
     pytest.importorskip("cryptography")
     import base64
 
-    from notari.crypto import EnvelopeCipher, generate_kek
+    from attestari.crypto import EnvelopeCipher, generate_kek
 
     return SQLiteEventStore(path, cipher=EnvelopeCipher(base64.b64decode(generate_kek())))
 
@@ -225,7 +225,7 @@ def test_concurrent_appends_never_fork_the_chain(tmp_path: Path) -> None:
     entries = store.audit_entries()
     assert len(store.events()) == 40 and len(entries) == 40
     assert [e.seq for e in entries] == list(range(1, 41))  # contiguous, no forks
-    from notari.audit import verify, verify_entries
+    from attestari.audit import verify, verify_entries
 
     assert verify_entries(entries).ok
     assert verify(store.events(), store.audit_entries()).ok
@@ -245,7 +245,7 @@ def test_two_connections_on_one_file_serialize(tmp_path: Path) -> None:
             )
         )
     # Either connection sees one valid, contiguous chain.
-    from notari.audit import verify
+    from attestari.audit import verify
 
     for store in (a, b):
         assert verify(store.events(), store.audit_entries()).ok
@@ -269,15 +269,15 @@ def test_entry_points_default_to_durable_local(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     pytest.importorskip("fastapi")
-    monkeypatch.delenv("NOTARI_DATABASE_URL", raising=False)
-    monkeypatch.setenv("NOTARI_SQLITE_PATH", str(tmp_path / "mcp.db"))
+    monkeypatch.delenv("ATTESTARI_DATABASE_URL", raising=False)
+    monkeypatch.setenv("ATTESTARI_SQLITE_PATH", str(tmp_path / "mcp.db"))
     # Keep the test fast: no sentence-transformers model load.
-    import notari.embed as embed_mod
+    import attestari.embed as embed_mod
 
     monkeypatch.setattr(embed_mod, "default_embedder", lambda: HashEmbedder())
 
-    from notari.mcp import _memory
-    from notari.server import _default_memory
+    from attestari.mcp import _memory
+    from attestari.server import _default_memory
 
     for factory in (_memory, _default_memory):
         mem = factory()

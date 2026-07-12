@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from notari import AnthropicExtractor, DeterministicExtractor, Memory  # noqa: E402
+from attestari import AnthropicExtractor, DeterministicExtractor, Memory  # noqa: E402
 
 from . import datasets  # noqa: E402
 
@@ -33,7 +33,7 @@ def run(
     extractor = DeterministicExtractor() if llm == "deterministic" else AnthropicExtractor()
 
     if engine == "postgres":
-        from notari import PostgresEventStore
+        from attestari import PostgresEventStore
 
         reset = PostgresEventStore()
         reset.truncate()
@@ -60,7 +60,7 @@ def run(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Notari eval harness")
+    parser = argparse.ArgumentParser(description="Attestari eval harness")
     parser.add_argument("--dataset", default="builtin")
     parser.add_argument("--dataset-file", default=None, help="JSON dataset file (overrides --dataset)")
     parser.add_argument("--llm", choices=["deterministic", "anthropic"], default="deterministic")

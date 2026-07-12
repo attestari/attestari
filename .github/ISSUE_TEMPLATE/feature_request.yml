@@ -6,9 +6,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        Notari is intentionally small at the core. The strongest proposals tend to
+        Attestari is intentionally small at the core. The strongest proposals tend to
         be **new adapters behind an existing port** (Extractor, EventStore,
-        Embedder, ProjectionBackend) — see [ARCHITECTURE.md](https://github.com/notarihq/notari/blob/main/ARCHITECTURE.md).
+        Embedder, ProjectionBackend) — see [ARCHITECTURE.md](https://github.com/attestari/attestari/blob/main/ARCHITECTURE.md).
 
   - type: textarea
     id: problem

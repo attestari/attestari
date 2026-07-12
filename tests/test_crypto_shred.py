@@ -1,7 +1,7 @@
 """Crypto-shred deletion against a live Postgres.
 
-Skipped unless NOTARI_DATABASE_URL is set and `cryptography` is installed. Sets
-NOTARI_KEK for the duration of the test so encryption-at-rest is active.
+Skipped unless ATTESTARI_DATABASE_URL is set and `cryptography` is installed. Sets
+ATTESTARI_KEK for the duration of the test so encryption-at-rest is active.
 """
 
 from __future__ import annotations
@@ -10,17 +10,17 @@ import os
 
 import pytest
 
-DSN = os.environ.get("NOTARI_DATABASE_URL")
-pytestmark = pytest.mark.skipif(not DSN, reason="set NOTARI_DATABASE_URL to run Postgres tests")
+DSN = os.environ.get("ATTESTARI_DATABASE_URL")
+pytestmark = pytest.mark.skipif(not DSN, reason="set ATTESTARI_DATABASE_URL to run Postgres tests")
 
 pytest.importorskip("cryptography")
 
-from notari import Memory, PostgresEventStore  # noqa: E402
-from notari.crypto import generate_kek  # noqa: E402
+from attestari import Memory, PostgresEventStore  # noqa: E402
+from attestari.crypto import generate_kek  # noqa: E402
 
 
 def test_crypto_shred_makes_subject_unrecoverable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NOTARI_KEK", generate_kek())
+    monkeypatch.setenv("ATTESTARI_KEK", generate_kek())
 
     PostgresEventStore(DSN).truncate()  # clears tables + keyring (cipher now enabled)
     mem = Memory.postgres(DSN)

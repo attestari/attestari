@@ -1,6 +1,6 @@
 # Security Policy
 
-Notari is security-sensitive infrastructure (encryption, provable deletion, a
+Attestari is security-sensitive infrastructure (encryption, provable deletion, a
 tamper-evident audit chain), so we take reports seriously.
 
 ## Reporting a vulnerability
@@ -8,7 +8,7 @@ tamper-evident audit chain), so we take reports seriously.
 **Please do not open a public issue for security vulnerabilities.**
 
 Instead, use **GitHub's private vulnerability reporting** ("Report a
-vulnerability" under the repo's Security tab), or email **notari.hq@gmail.com**.
+vulnerability" under the repo's Security tab), or email **attestari.hq@gmail.com**.
 We aim to acknowledge within 72 hours and to coordinate a fix and disclosure
 timeline with you.
 
@@ -23,7 +23,7 @@ detection," "PII leaks across subjects").
 - **Audit chain** (`audit.py`) — any way to alter history without
   `verify_audit()` detecting it.
 - **Subject isolation** — any cross-subject data leak in retrieval or projection.
-- **Key handling** — the KEK is read from `NOTARI_KEK`; production should use a
+- **Key handling** — the KEK is read from `ATTESTARI_KEK`; production should use a
   KMS (planned). Reports about key exposure are welcome.
 
 ## Scope notes

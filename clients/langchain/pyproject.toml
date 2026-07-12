@@ -3,15 +3,15 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "notari-langchain"
+name = "attestari-langchain"
 version = "0.0.1"
-description = "LangChain integration for Notari — the auditable memory layer for AI agents."
+description = "LangChain integration for Attestari — the auditable memory layer for AI agents."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
-keywords = ["ai", "agents", "memory", "notari", "langchain"]
+keywords = ["ai", "agents", "memory", "attestari", "langchain"]
 dependencies = [
-  "notari>=0.0.1",
+  "attestari>=0.0.1",
   "langchain-core>=0.3",
 ]
 
@@ -19,4 +19,4 @@ dependencies = [
 dev = ["pytest>=8"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/notari_langchain"]
+packages = ["src/attestari_langchain"]

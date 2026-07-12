@@ -67,7 +67,7 @@ class SentenceTransformerEmbedder:
     """Real semantic embeddings via sentence-transformers (optional dep).
 
     Defaults to `all-MiniLM-L6-v2` (384-dim, L2-normalised), which matches the
-    `vector(384)` columns in src/notari/db/schema.sql. Install with `notari[embeddings]`.
+    `vector(384)` columns in src/attestari/db/schema.sql. Install with `attestari[embeddings]`.
     Swap this in for production-quality retrieval; the architecture is unchanged.
     """
 

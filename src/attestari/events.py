@@ -1,6 +1,6 @@
 """Event types — the append-only source of truth.
 
-Everything Notari can answer (the graph, the vector index, time-travel queries,
+Everything Attestari can answer (the graph, the vector index, time-travel queries,
 provable deletion) is a fold over a stream of these events. They are immutable
 dataclasses; the store appends them and the projection folds them.
 """
@@ -47,7 +47,7 @@ class FactAsserted:
     """A (subject, predicate, object) triple believed true from `valid_from`.
 
     `valid_*` is VALID time (true-in-world); `recorded_at` is SYSTEM time (when
-    Notari learned it). `source_episode_id` + `char_span` are the provenance."""
+    Attestari learned it). `source_episode_id` + `char_span` are the provenance."""
 
     fact_id: str
     subject: str

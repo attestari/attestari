@@ -73,9 +73,9 @@ class Memory:
         embedder: Embedder | None = None,
     ) -> "Memory":
         """Durable engine with **zero infrastructure**: events in one local
-        SQLite file (default `~/.notari/notari.db`), stdlib only — no server,
+        SQLite file (default `~/.attestari/attestari.db`), stdlib only — no server,
         no container. Memory survives restarts; all guarantees (audit chain,
-        crypto-shred with `NOTARI_KEK`, deep verification) hold. One process at
+        crypto-shred with `ATTESTARI_KEK`, deep verification) hold. One process at
         a time — for a concurrent production service use `Memory.postgres()`."""
         from .store_sqlite import SQLiteEventStore
 

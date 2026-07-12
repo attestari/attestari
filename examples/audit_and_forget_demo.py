@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Audit & forget demo: audit a fact -> trace its source -> forget -> PROVE.
 
-Runs against Postgres with crypto-shred when NOTARI_DATABASE_URL is set (a KEK is
+Runs against Postgres with crypto-shred when ATTESTARI_DATABASE_URL is set (a KEK is
 generated if none is present), otherwise the in-memory engine.
 
-    NOTARI_PG_PORT=5433 docker compose up -d
-    NOTARI_DATABASE_URL=postgresql://notari:notari@localhost:5433/notari \
+    ATTESTARI_PG_PORT=5433 docker compose up -d
+    ATTESTARI_DATABASE_URL=postgresql://attestari:attestari@localhost:5433/attestari \
         python examples/audit_and_forget_demo.py
 """
 
@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from notari import Memory, generate_kek  # noqa: E402
+from attestari import Memory, generate_kek  # noqa: E402
 
 SUBJECT = "user_42"
 
@@ -27,13 +27,13 @@ def rule(t: str) -> None:
 
 
 def main() -> int:
-    pg = bool(os.environ.get("NOTARI_DATABASE_URL"))
-    if pg and not os.environ.get("NOTARI_KEK"):
-        os.environ["NOTARI_KEK"] = generate_kek()  # enable crypto-shred for the demo
-    crypto = pg and bool(os.environ.get("NOTARI_KEK"))
+    pg = bool(os.environ.get("ATTESTARI_DATABASE_URL"))
+    if pg and not os.environ.get("ATTESTARI_KEK"):
+        os.environ["ATTESTARI_KEK"] = generate_kek()  # enable crypto-shred for the demo
+    crypto = pg and bool(os.environ.get("ATTESTARI_KEK"))
 
     if pg:
-        from notari import PostgresEventStore
+        from attestari import PostgresEventStore
 
         PostgresEventStore().truncate()
         mem = Memory.postgres()
@@ -73,9 +73,9 @@ def main() -> int:
     print(f"   certificate {cert.certificate_id[:8]}: {cert.facts_deleted} facts, "
           f"{cert.episodes_deleted} episodes, manifest {cert.manifest_hash[:12]}…")
     if cert.signature:
-        from notari import verify_certificate
+        from attestari import verify_certificate
 
-        verified = verify_certificate(cert, os.environ["NOTARI_KEK"])
+        verified = verify_certificate(cert, os.environ["ATTESTARI_KEK"])
         print(f"   certificate signed    -> {cert.algorithm}, "
               f"verify_certificate = {verified}")
     print(f"   recall after forget   -> {mem.answer('where does the user live', subject_id=SUBJECT)}")

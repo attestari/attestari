@@ -1,4 +1,4 @@
-"""The minimal Notari console.
+"""The minimal Attestari console.
 
 A single self-contained page served at `/` by the FastAPI server. It renders the
 memory as a graph (ReactFlow via CDN — no build step), with a time-travel slider
@@ -11,7 +11,7 @@ CONSOLE_HTML = """<!doctype html>
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Notari console</title>
+<title>Attestari console</title>
 <link rel="stylesheet" href="https://esm.sh/reactflow@11.11.4/dist/style.css" />
 <style>
   html,body,#root { height:100%; margin:0; font-family:ui-sans-serif,system-ui,sans-serif; }
@@ -89,7 +89,7 @@ function App() {
     const cert = await r.json();
     alert("Deleted " + cert.facts_deleted + " facts / " + cert.episodes_deleted +
           " episodes.\\nCertificate " + cert.certificate_id +
-          (cert.signature ? "\\nSigned: " + cert.algorithm : "\\n(unsigned — no NOTARI_KEK)"));
+          (cert.signature ? "\\nSigned: " + cert.algorithm : "\\n(unsigned — no ATTESTARI_KEK)"));
     await load();
     await verifyAudit();
   }
@@ -103,7 +103,7 @@ function App() {
   const asof = new Date(t).toISOString().slice(0, 10);
   return h("div", { style: { height: "100%", display: "flex", flexDirection: "column" } },
     h("div", { className: "bar" },
-      h("h1", null, "Notari"),
+      h("h1", null, "Attestari"),
       h("input", { type: "text", value: subject, onChange: e => setSubject(e.target.value) }),
       h("button", { onClick: load }, "Load"),
       h("span", { className: "muted" }, "as of"),

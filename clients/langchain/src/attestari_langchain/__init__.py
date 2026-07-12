@@ -1,23 +1,23 @@
-"""LangChain integration for Notari — the auditable memory layer for AI agents.
+"""LangChain integration for Attestari — the auditable memory layer for AI agents.
 
 Two pieces, both built on the stable `langchain-core` primitives:
 
-- **`NotariRetriever`** (`BaseRetriever`) — recall a subject's relevant facts and
+- **`AttestariRetriever`** (`BaseRetriever`) — recall a subject's relevant facts and
   hand them to a chain/agent as `Document`s, each carrying **provenance** in its
   metadata (fact id, source episode, valid-from, confidence). Supports bi-temporal
   `as_of` retrieval. This is the idiomatic way to inject long-term memory into a
   modern LCEL / RAG chain or an agent tool.
-- **`NotariChatMessageHistory`** (`BaseChatMessageHistory`) — a drop-in history for
+- **`AttestariChatMessageHistory`** (`BaseChatMessageHistory`) — a drop-in history for
   `RunnableWithMessageHistory`: it *learns facts* from each turn (not a raw
   transcript), surfaces the subject's known facts as context, and maps `clear()`
-  to Notari's provable deletion (`forget`).
+  to Attestari's provable deletion (`forget`).
 
-    from notari import Memory
-    from notari_langchain import NotariRetriever
+    from attestari import Memory
+    from attestari_langchain import AttestariRetriever
 
     mem = Memory()                       # or Memory.postgres() for durable storage
     mem.add("Alice lives in Toronto.", subject_id="user_42")
-    retriever = NotariRetriever(mem=mem, subject_id="user_42")
+    retriever = AttestariRetriever(mem=mem, subject_id="user_42")
     retriever.invoke("where does the user live?")   # -> [Document("user lives_in Toronto", ...)]
 """
 
@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from notari import Memory
+from attestari import Memory
 
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.chat_history import BaseChatMessageHistory
@@ -34,7 +34,7 @@ from langchain_core.messages import BaseMessage, SystemMessage
 from langchain_core.retrievers import BaseRetriever
 from pydantic import ConfigDict
 
-__all__ = ["NotariRetriever", "NotariChatMessageHistory"]
+__all__ = ["AttestariRetriever", "AttestariChatMessageHistory"]
 __version__ = "0.0.1"
 
 
@@ -42,13 +42,13 @@ def _triple(edge: Any) -> str:
     return f"{edge.subject} {edge.predicate.replace('_', ' ')} {edge.object}"
 
 
-class NotariRetriever(BaseRetriever):
+class AttestariRetriever(BaseRetriever):
     """Retrieve a subject's relevant facts as provenance-carrying `Document`s."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     mem: Memory
-    """The Notari engine — `Memory()` (in-memory) or `Memory.postgres()` (durable)."""
+    """The Attestari engine — `Memory()` (in-memory) or `Memory.postgres()` (durable)."""
     subject_id: str | None = None
     """Scope retrieval to one subject. Use an opaque pseudonym, not raw PII."""
     k: int = 5
@@ -83,11 +83,11 @@ class NotariRetriever(BaseRetriever):
         return docs
 
 
-class NotariChatMessageHistory(BaseChatMessageHistory):
+class AttestariChatMessageHistory(BaseChatMessageHistory):
     """A `BaseChatMessageHistory` that learns facts instead of storing a transcript.
 
     Drop into `RunnableWithMessageHistory`. `add_messages` ingests each turn into
-    Notari; `messages` returns the subject's current facts as a single system
+    Attestari; `messages` returns the subject's current facts as a single system
     message; `clear` performs provable deletion.
     """
 

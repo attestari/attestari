@@ -14,7 +14,7 @@ from datetime import datetime
 class DeletionCertificate:
     """Proof retained after a subject's data is destroyed (GDPR Art. 17).
 
-    When encryption is enabled (`NOTARI_KEK`), `signature` is HMAC-SHA256 over
+    When encryption is enabled (`ATTESTARI_KEK`), `signature` is HMAC-SHA256 over
     the canonical certificate payload under a KEK-derived key (see
     `crypto.sign_certificate` / `crypto.verify_certificate`) — the certificate
     can't be forged or altered without the root key. Without a KEK the

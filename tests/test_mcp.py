@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from notari import Memory
-from notari.mcp import tool_add, tool_forget, tool_provenance, tool_search
+from attestari import Memory
+from attestari.mcp import tool_add, tool_forget, tool_provenance, tool_search
 
 
 def test_mcp_tools_roundtrip() -> None:
@@ -37,7 +37,7 @@ def test_provenance_missing_fact() -> None:
 
 def test_mcp_server_builds() -> None:
     pytest.importorskip("mcp")
-    from notari.mcp import create_server
+    from attestari.mcp import create_server
 
     server = create_server(Memory())
     assert server is not None

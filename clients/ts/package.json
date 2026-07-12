@@ -1,7 +1,7 @@
 {
-  "name": "@notari/client",
+  "name": "@attestari/client",
   "version": "0.0.1",
-  "description": "TypeScript client for the Notari memory engine REST API.",
+  "description": "TypeScript client for the Attestari memory engine REST API.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -11,17 +11,17 @@
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
-  "keywords": ["ai", "agents", "memory", "notari"],
+  "keywords": ["ai", "agents", "memory", "attestari"],
   "license": "Apache-2.0",
-  "author": "Notari",
-  "homepage": "https://github.com/notarihq/notari#readme",
+  "author": "Attestari",
+  "homepage": "https://github.com/attestari/attestari#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/notarihq/notari.git",
+    "url": "git+https://github.com/attestari/attestari.git",
     "directory": "clients/ts"
   },
   "bugs": {
-    "url": "https://github.com/notarihq/notari/issues"
+    "url": "https://github.com/attestari/attestari/issues"
   },
   "publishConfig": {
     "access": "public"

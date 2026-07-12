@@ -5,7 +5,7 @@ minimalism is the point — it's what lets the projection be a pure fold and the
 Postgres adapter be a thin swap behind the same protocol.
 
 Encryption is opt-in and mirrors the Postgres adapter: pass an `EnvelopeCipher`
-(or set `NOTARI_KEK`) and each subject's PII — episode payloads and fact objects —
+(or set `ATTESTARI_KEK`) and each subject's PII — episode payloads and fact objects —
 is encrypted at rest under a per-subject key. `shred_subject` destroys that key,
 after which the retained ciphertext is unrecoverable and the subject's events drop
 out of `events()`. The default is a `NullCipher` (passthrough), so the
@@ -40,7 +40,7 @@ class EventStore(Protocol):
 class InMemoryEventStore:
     """In-memory adapter: keeps the log in a list. Deterministic and dependency
     free, so the spike, tests, and eval run anywhere. The PostgresEventStore
-    implements the same protocol against src/notari/db/schema.sql.
+    implements the same protocol against src/attestari/db/schema.sql.
 
     With a cipher enabled, PII is stored as ciphertext and `forget()` (via
     `shred_subject`) makes it unrecoverable — the same crypto-shred guarantee as
@@ -50,7 +50,7 @@ class InMemoryEventStore:
     def __init__(self, cipher: NullCipher | EnvelopeCipher | None = None) -> None:
         self._log: list[Event] = []
         self._audit: list[AuditEntry] = []
-        # Encryption is opt-in: EnvelopeCipher when NOTARI_KEK is set, else NullCipher.
+        # Encryption is opt-in: EnvelopeCipher when ATTESTARI_KEK is set, else NullCipher.
         self.cipher = cipher or cipher_from_env()
         # Key lifecycle is delegated to the shared KeyManager; only the resting
         # place of the wrapped DEKs (a dict here, a table in Postgres) differs.

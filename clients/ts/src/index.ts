@@ -1,4 +1,4 @@
-// Notari TypeScript SDK — a thin typed client over the REST API.
+// Attestari TypeScript SDK — a thin typed client over the REST API.
 // Mirrors the Python `Memory` surface. Works in Node 18+ and the browser (uses
 // the global `fetch`).
 
@@ -36,7 +36,7 @@ export interface DeletionCertificate {
   facts_deleted: number;
   manifest_hash: string;
   issued_at: string | null;
-  /** HMAC-SHA256 under a KEK-derived key; null when the server runs without NOTARI_KEK. */
+  /** HMAC-SHA256 under a KEK-derived key; null when the server runs without ATTESTARI_KEK. */
   signature: string | null;
   algorithm: string | null;
 }
@@ -70,7 +70,7 @@ export interface SearchOptions {
   limit?: number;
 }
 
-export class NotariClient {
+export class AttestariClient {
   constructor(private readonly baseUrl: string = "http://localhost:8000") {
     this.baseUrl = baseUrl.replace(/\/$/, "");
   }
@@ -82,7 +82,7 @@ export class NotariClient {
       body: body ? JSON.stringify(body) : undefined,
     });
     if (!res.ok) {
-      throw new Error(`Notari ${method} ${path} failed: ${res.status} ${await res.text()}`);
+      throw new Error(`Attestari ${method} ${path} failed: ${res.status} ${await res.text()}`);
     }
     return (await res.json()) as T;
   }
@@ -109,7 +109,7 @@ export class NotariClient {
   }
 
   async search(query: string, opts: SearchOptions = {}): Promise<SearchResult[]> {
-    const path = `/v1/search${NotariClient.qs({
+    const path = `/v1/search${AttestariClient.qs({
       q: query,
       subject_id: opts.subjectId,
       as_of: opts.asOf,
@@ -128,7 +128,7 @@ export class NotariClient {
   async timeline(subjectId?: string): Promise<Fact[]> {
     const r = await this.request<{ edges: Fact[] }>(
       "GET",
-      `/v1/timeline${NotariClient.qs({ subject_id: subjectId })}`,
+      `/v1/timeline${AttestariClient.qs({ subject_id: subjectId })}`,
     );
     return r.edges;
   }
@@ -140,14 +140,14 @@ export class NotariClient {
   async forget(subjectId: string, requestedBy = "ts-sdk"): Promise<DeletionCertificate> {
     return this.request(
       "POST",
-      `/v1/forget/${encodeURIComponent(subjectId)}${NotariClient.qs({ requested_by: requestedBy })}`,
+      `/v1/forget/${encodeURIComponent(subjectId)}${AttestariClient.qs({ requested_by: requestedBy })}`,
     );
   }
 
   async conflicts(subjectId?: string): Promise<ConflictGroup[]> {
     const r = await this.request<{ conflicts: ConflictGroup[] }>(
       "GET",
-      `/v1/conflicts${NotariClient.qs({ subject_id: subjectId })}`,
+      `/v1/conflicts${AttestariClient.qs({ subject_id: subjectId })}`,
     );
     return r.conflicts;
   }
@@ -155,6 +155,6 @@ export class NotariClient {
   /** Verify the tamper-evident audit chain. `deep` also re-checks stored event
    *  content against the chain's digests (catches silent in-place edits). */
   async verifyAudit(deep = false): Promise<AuditReport> {
-    return this.request("GET", `/v1/audit/verify${NotariClient.qs({ deep: deep ? "true" : undefined })}`);
+    return this.request("GET", `/v1/audit/verify${AttestariClient.qs({ deep: deep ? "true" : undefined })}`);
   }
 }

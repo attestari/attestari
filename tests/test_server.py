@@ -12,8 +12,8 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from notari import Memory  # noqa: E402
-from notari.server import create_app  # noqa: E402
+from attestari import Memory  # noqa: E402
+from attestari.server import create_app  # noqa: E402
 
 
 def _client() -> TestClient:
@@ -67,7 +67,7 @@ def test_audit_verify_deep_catches_content_tamper() -> None:
     passes chain-only verification but fails deep verification at its seq."""
     import dataclasses
 
-    from notari.events import FactAsserted
+    from attestari.events import FactAsserted
 
     mem = Memory()
     c = TestClient(create_app(mem))

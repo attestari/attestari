@@ -1,12 +1,12 @@
-"""Apply the Notari schema to a Postgres database — no repo clone needed.
+"""Apply the Attestari schema to a Postgres database — no repo clone needed.
 
-The schema ships inside the package (`notari/db/schema.sql`), so a pip-only
+The schema ships inside the package (`attestari/db/schema.sql`), so a pip-only
 install can stand up the durable tier against *any* Postgres (managed, local,
 or the bundled docker-compose one):
 
-    python -m notari.initdb postgresql://user:pass@host:5432/dbname
-    # or, with NOTARI_DATABASE_URL already set:
-    python -m notari.initdb
+    python -m attestari.initdb postgresql://user:pass@host:5432/dbname
+    # or, with ATTESTARI_DATABASE_URL already set:
+    python -m attestari.initdb
 
 Idempotent: the schema uses CREATE ... IF NOT EXISTS plus lightweight ALTER
 migrations, so re-running against an existing database is safe. Requires the
@@ -23,8 +23,8 @@ import sys
 
 
 def schema_sql() -> str:
-    """The packaged Postgres schema (single source of truth: notari/db/schema.sql)."""
-    return importlib.resources.files("notari").joinpath("db/schema.sql").read_text()
+    """The packaged Postgres schema (single source of truth: attestari/db/schema.sql)."""
+    return importlib.resources.files("attestari").joinpath("db/schema.sql").read_text()
 
 
 def _redact(dsn: str) -> str:
@@ -41,16 +41,16 @@ def init_db(dsn: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
-    dsn = args[0] if args else os.environ.get("NOTARI_DATABASE_URL")
+    dsn = args[0] if args else os.environ.get("ATTESTARI_DATABASE_URL")
     if not dsn:
         print(
-            "usage: python -m notari.initdb [DSN]\n"
-            "       (or set NOTARI_DATABASE_URL)",
+            "usage: python -m attestari.initdb [DSN]\n"
+            "       (or set ATTESTARI_DATABASE_URL)",
             file=sys.stderr,
         )
         return 2
     init_db(dsn)
-    print(f"notari schema applied to {_redact(dsn)}")
+    print(f"attestari schema applied to {_redact(dsn)}")
     return 0
 
 

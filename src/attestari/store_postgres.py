@@ -1,7 +1,7 @@
 """PostgresEventStore — the durable event-log adapter.
 
 Implements the same `EventStore` protocol as `InMemoryEventStore`, persisting
-events to `src/notari/db/schema.sql` (the `episode` and `fact_event` tables) and
+events to `src/attestari/db/schema.sql` (the `episode` and `fact_event` tables) and
 reconstructing them on read. Because `Memory` and `Projector` consume only
 `events()`, swapping this store in makes the whole engine durable — survives
 process restarts — without changing a line of the core logic.
@@ -10,7 +10,7 @@ A fact's scope (subject_id, etc.) is recovered from its source episode rather
 than duplicated on every fact row: provenance already ties each fact to the
 episode it came from, and the episode owns the scope.
 
-Requires the `postgres` extra:  pip install "notari[postgres]"
+Requires the `postgres` extra:  pip install "attestari[postgres]"
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from .projection import Edge, Projection, Projector
 from .records import DeletionCertificate
 from .retrieve import SearchResult, weights_for
 
-_DEFAULT_DSN = "postgresql://notari:notari@localhost:5432/notari"
+_DEFAULT_DSN = "postgresql://attestari:attestari@localhost:5432/attestari"
 
 
 def _span(lo: int | None, hi: int | None) -> tuple[int, int] | None:
@@ -82,9 +82,9 @@ class PostgresEventStore:
         import psycopg  # imported lazily so the core stays dependency-free
         from psycopg.rows import dict_row
 
-        self.dsn = dsn or os.environ.get("NOTARI_DATABASE_URL", _DEFAULT_DSN)
+        self.dsn = dsn or os.environ.get("ATTESTARI_DATABASE_URL", _DEFAULT_DSN)
         self._conn = psycopg.connect(self.dsn, autocommit=True, row_factory=dict_row)
-        # Encryption is opt-in: EnvelopeCipher when NOTARI_KEK is set, else NullCipher.
+        # Encryption is opt-in: EnvelopeCipher when ATTESTARI_KEK is set, else NullCipher.
         self.cipher = cipher or cipher_from_env()
         # Key lifecycle is delegated to the shared KeyManager; only the resting
         # place of the wrapped DEKs (the keyring table) is adapter-specific.
@@ -129,7 +129,7 @@ class PostgresEventStore:
         # and an advisory xact lock serialises concurrent appenders so two
         # writers can never read the same prev_hash and fork the chain.
         with self._conn.transaction():
-            self._conn.execute("SELECT pg_advisory_xact_lock(hashtext('notari.event_log'))")
+            self._conn.execute("SELECT pg_advisory_xact_lock(hashtext('attestari.event_log'))")
             row = self._conn.execute(
                 "SELECT seq, entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
             ).fetchone()
@@ -383,7 +383,7 @@ class PostgresProjectionBackend:
     Rebuilds the `entity`/`edge` projection tables from the durable event log and
     serves hybrid retrieval in SQL: pgvector cosine similarity + Postgres
     full-text ranking + a bi-temporal `as_of` filter. This is what lights up the
-    HNSW index in src/notari/db/schema.sql. `project()` still folds the log for
+    HNSW index in src/attestari/db/schema.sql. `project()` still folds the log for
     timeline/supersession (the log is the source of truth); only `search()` reads
     the materialised table.
 

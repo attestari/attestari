@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from notari import LexicalEntityResolver, Memory
+from attestari import LexicalEntityResolver, Memory
 
 
 def test_lexical_resolver_bands_and_canonical() -> None:

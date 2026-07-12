@@ -2,7 +2,7 @@
 """Give any AI agent long-term memory in a few lines — runs with zero setup.
 
 The pattern: after each user turn, `remember()` it; before the agent answers,
-`recall()` the relevant facts and drop them into your prompt. Notari handles
+`recall()` the relevant facts and drop them into your prompt. Attestari handles
 extraction, supersession (old facts get replaced), time-travel, and deletion.
 
     python examples/agent_with_memory.py
@@ -15,14 +15,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from notari import Memory  # noqa: E402
+from attestari import Memory  # noqa: E402
 
 mem = Memory()  # in-memory; swap for Memory.postgres() in production
 USER = "alice"
 
 
 def remember(text: str) -> None:
-    """Call this on each user message — Notari extracts and stores the facts."""
+    """Call this on each user message — Attestari extracts and stores the facts."""
     mem.add(text, subject_id=USER)
 
 

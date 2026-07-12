@@ -1,4 +1,4 @@
-"""Notari — the auditable memory layer for AI agents.
+"""Attestari — the auditable memory layer for AI agents.
 
 An event-sourced, bi-temporal memory engine. Three storage tiers, one engine:
 in-memory with zero dependencies (`Memory()`), durable in a local SQLite file

@@ -7,7 +7,7 @@ subject you destroy their wrapped DEK — after which every ciphertext belonging
 them is unrecoverable, even though the (immutable) event rows physically remain.
 The audit skeleton survives; the content does not.
 
-Encryption is **opt-in**: with no `NOTARI_KEK` configured we return a `NullCipher`
+Encryption is **opt-in**: with no `ATTESTARI_KEK` configured we return a `NullCipher`
 (passthrough), so the default and zero-dependency paths are byte-for-byte
 unchanged. Requires the `crypto` extra (`cryptography`) when enabled.
 
@@ -33,12 +33,12 @@ _NONCE = 12  # AES-GCM nonce length
 
 # Domain separation for the certificate-signing key derived from the KEK, so a
 # signature can never be confused with (or replayed as) any other KEK use.
-_CERT_SIGNING_INFO = b"notari/certificate-signing/v1"
+_CERT_SIGNING_INFO = b"attestari/certificate-signing/v1"
 CERT_ALGORITHM = "hmac-sha256-kek-v1"
 
 
 class NullCipher:
-    """No-op cipher: storage stays plaintext (default when NOTARI_KEK is unset)."""
+    """No-op cipher: storage stays plaintext (default when ATTESTARI_KEK is unset)."""
 
     enabled = False
 
@@ -210,7 +210,7 @@ def certificate_payload(cert: DeletionCertificate) -> bytes:
     issued_us = str(int(round(cert.issued_at.timestamp() * 1_000_000)))
     return "|".join(
         [
-            "notari-cert-v1",
+            "attestari-cert-v1",
             cert.certificate_id,
             cert.subject_id,
             cert.requested_by,
@@ -229,7 +229,7 @@ def sign_certificate(
 
     With encryption enabled the signature is HMAC-SHA256 over the canonical
     payload, under a key derived from the KEK — forging or altering a
-    certificate requires the root key. With a NullCipher (no `NOTARI_KEK`)
+    certificate requires the root key. With a NullCipher (no `ATTESTARI_KEK`)
     the certificate is returned unsigned (`signature=None`): a logical-delete
     deployment has no root of trust to sign with, and we don't pretend.
     """
@@ -241,7 +241,7 @@ def sign_certificate(
 
 def verify_certificate(cert: DeletionCertificate, kek_b64: str) -> bool:
     """Auditor-facing check: does this certificate's signature verify under the
-    deployment KEK (base64, as in `NOTARI_KEK`)? Recomputes the canonical
+    deployment KEK (base64, as in `ATTESTARI_KEK`)? Recomputes the canonical
     payload from the certificate's own fields, so any altered field — counts,
     subject, manifest hash, timestamp — fails verification."""
     if not cert.signature or cert.algorithm != CERT_ALGORITHM:
@@ -251,13 +251,13 @@ def verify_certificate(cert: DeletionCertificate, kek_b64: str) -> bool:
 
 
 def cipher_from_env() -> NullCipher | EnvelopeCipher:
-    """EnvelopeCipher if NOTARI_KEK (base64) is set, else a NullCipher."""
-    kek_b64 = os.environ.get("NOTARI_KEK")
+    """EnvelopeCipher if ATTESTARI_KEK (base64) is set, else a NullCipher."""
+    kek_b64 = os.environ.get("ATTESTARI_KEK")
     if not kek_b64:
         return NullCipher()
     return EnvelopeCipher(base64.b64decode(kek_b64))
 
 
 def generate_kek() -> str:
-    """A fresh base64 256-bit KEK (for `export NOTARI_KEK=...`)."""
+    """A fresh base64 256-bit KEK (for `export ATTESTARI_KEK=...`)."""
     return base64.b64encode(secrets.token_bytes(32)).decode()

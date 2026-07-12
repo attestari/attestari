@@ -1,4 +1,4 @@
--- Notari — Postgres schema (the durable core)
+-- Attestari — Postgres schema (the durable core)
 --
 -- This is the single-database core: the event log is the source of truth, and
 -- the graph / vector / full-text projections are rebuildable from it. The whole
@@ -6,11 +6,11 @@
 --
 -- Bi-temporal modelling is explicit on every fact:
 --   * valid_from / valid_to  -> VALID time  (when the fact is true in the world)
---   * tx_from   / tx_to       -> SYSTEM time (when Notari knew it)
+--   * tx_from   / tx_to       -> SYSTEM time (when Attestari knew it)
 -- "What did the agent believe about X on date D, and why?" is a query against
 -- these ranges plus the provenance link back to the source episode.
 --
--- The spike implements this same model in-memory (see src/notari/) so the
+-- The spike implements this same model in-memory (see src/attestari/) so the
 -- engine also runs with zero dependencies.
 
 CREATE EXTENSION IF NOT EXISTS vector;      -- pgvector: HNSW semantic search

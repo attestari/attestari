@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prove the moat — adversarially, with zero setup.
 
-Notari's differentiators aren't "trust us" bullet points; they're properties you
+Attestari's differentiators aren't "trust us" bullet points; they're properties you
 can *break on purpose and watch get caught*. This script does exactly that for
 the three claims competitors don't make:
 
@@ -25,14 +25,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from notari import (  # noqa: E402
+from attestari import (  # noqa: E402
     EnvelopeCipher,
     InMemoryEventStore,
     Memory,
     generate_kek,
     verify_certificate,
 )
-from notari.events import EpisodeIngested, FactAsserted  # noqa: E402
+from attestari.events import EpisodeIngested, FactAsserted  # noqa: E402
 
 import base64  # noqa: E402
 
@@ -101,7 +101,7 @@ def prove_provable_deletion() -> bool:
     rule(2, "Provable deletion — crypto-shred, then fail to recover the content")
 
     # An append-only log can't truly 'forget' — the row physically remains. So
-    # Notari encrypts each subject's PII under a per-subject key and, to forget a
+    # Attestari encrypts each subject's PII under a per-subject key and, to forget a
     # subject, DESTROYS that key. With the `crypto` extra we prove cryptographic
     # unrecoverability directly; without it we still prove logical erasure +
     # certificate + audit survival (the zero-dependency default).
@@ -112,7 +112,7 @@ def prove_provable_deletion() -> bool:
         mem = Memory(store=store)
     else:
         kv("note", "cryptography not installed — proving logical deletion")
-        kv("", "pip install 'notari[crypto]' for cryptographic crypto-shred")
+        kv("", "pip install 'attestari[crypto]' for cryptographic crypto-shred")
         store = None
         mem = Memory()
 
@@ -196,7 +196,7 @@ def prove_time_travel() -> bool:
 
 
 def main() -> int:
-    print("\033[1mNotari — prove the moat (zero setup, self-verifying)\033[0m")
+    print("\033[1mAttestari — prove the moat (zero setup, self-verifying)\033[0m")
     ok = True
     for prove in (prove_tamper_evident, prove_provable_deletion, prove_time_travel):
         try:

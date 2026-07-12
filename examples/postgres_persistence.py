@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Durability demo: the same engine, now durable on Postgres.
 
-    NOTARI_PG_PORT=5433 docker compose up -d
+    ATTESTARI_PG_PORT=5433 docker compose up -d
     pip install "psycopg[binary]"
-    NOTARI_DATABASE_URL=postgresql://notari:notari@localhost:5433/notari \
+    ATTESTARI_DATABASE_URL=postgresql://attestari:attestari@localhost:5433/attestari \
         python examples/postgres_persistence.py
 
 Proves the in-memory loop works identically against Postgres, and that the data
@@ -18,9 +18,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from notari import Memory, PostgresEventStore  # noqa: E402
+from attestari import Memory, PostgresEventStore  # noqa: E402
 
-DSN = os.environ.get("NOTARI_DATABASE_URL", "postgresql://notari:notari@localhost:5433/notari")
+DSN = os.environ.get("ATTESTARI_DATABASE_URL", "postgresql://attestari:attestari@localhost:5433/attestari")
 
 
 def main() -> int:

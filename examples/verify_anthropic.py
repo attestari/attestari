@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from notari import AnthropicExtractor, Memory  # noqa: E402
+from attestari import AnthropicExtractor, Memory  # noqa: E402
 
 # Cheapest tier for a verification run.
 mem = Memory(extractor=AnthropicExtractor(model="claude-haiku-4-5-20251001"))

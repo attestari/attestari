@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from notari import Memory
+from attestari import Memory
 
 
 def _seed() -> Memory:
@@ -40,7 +40,7 @@ def test_audit_detects_deletion() -> None:
 
 
 def test_deep_verify_detects_silent_content_edit() -> None:
-    from notari.events import FactAsserted
+    from attestari.events import FactAsserted
 
     mem = _seed()
     # Find a fact event and silently rewrite its object *in the log only*,

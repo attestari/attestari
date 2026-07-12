@@ -1,4 +1,4 @@
-# Learn Notari — how it's built (a beginner's guide)
+# Learn Attestari — how it's built (a beginner's guide)
 
 This guide explains **what you built and why**, assuming you know basic
 programming (variables, functions, maybe classes) but not the bigger patterns.
@@ -11,11 +11,11 @@ Read Part 1 first — once those 6 ideas click, every file makes sense.
 ### Idea 1: The event log (a diary you never erase)
 
 Most apps store **the current state**: a row in a table that you UPDATE and
-overwrite. Notari does the opposite. It stores a **list of things that happened**,
+overwrite. Attestari does the opposite. It stores a **list of things that happened**,
 in order, and never edits past entries. That list is the *event log*.
 
 Think of a bank: it doesn't store just "balance = $100." It stores every
-deposit and withdrawal. Your balance is *computed* from that history. Notari
+deposit and withdrawal. Your balance is *computed* from that history. Attestari
 stores events like "this fact was learned," "this fact was corrected," "this
 subject was forgotten."
 
@@ -40,7 +40,7 @@ Imagine a wall socket. Your laptop doesn't care what's behind the wall (a power
 plant, solar panels, a battery) — it just needs the socket shape. The socket is a
 **port**; whatever plugs into it is an **adapter**.
 
-Notari defines ports for the swappable jobs:
+Attestari defines ports for the swappable jobs:
 - **Extractor** — turns text into facts (a regex version *or* Claude).
 - **EventStore** — stores the log (in-memory *or* Postgres).
 - **Embedder** — turns text into numbers for search (a toy *or* a real model).
@@ -70,7 +70,7 @@ this?" and get a real answer. That receipt-keeping is **provenance**.
 
 ### Idea 6: The two trust features
 
-These are the things competitors don't have, and they're the reason Notari exists:
+These are the things competitors don't have, and they're the reason Attestari exists:
 
 - **Crypto-shred deletion.** Each user's private text is encrypted with a unique
   key. To "forget" a user, we **destroy their key** — now their encrypted data is
@@ -89,12 +89,12 @@ These are the things competitors don't have, and they're the reason Notari exist
 
 ```
 killer/
-├── src/notari/        ← THE ENGINE (the Python library; 18 files)
-├── clients/ts/        ← TypeScript SDK (use Notari from JavaScript)
+├── src/attestari/        ← THE ENGINE (the Python library; 18 files)
+├── clients/ts/        ← TypeScript SDK (use Attestari from JavaScript)
 ├── examples/          ← runnable demos (start here to see it work)
 ├── eval/              ← measurement (tests of quality + speed + benchmarks)
 ├── tests/             ← automated tests (36 of them)
-├── src/notari/db/schema.sql      ← the Postgres database design
+├── src/attestari/db/schema.sql      ← the Postgres database design
 ├── docker-compose.yml ← one command to start Postgres
 ├── *.md               ← docs (README, CONTRIBUTING, this file)
 ├── pyproject.toml     ← Python package config (name, dependencies)
@@ -135,7 +135,7 @@ rebuilds the projection (u1 is gone), and returns a **certificate** proving it.
 
 ## Part 4 — Every file, explained
 
-### The engine — `src/notari/`
+### The engine — `src/attestari/`
 
 **`events.py` — the vocabulary.** Defines the kinds of events as small, *frozen*
 (unchangeable) data records: `EpisodeIngested` (raw text came in), `FactAsserted`
@@ -217,21 +217,21 @@ runs **hybrid search in SQL** using `pgvector` (vector search) + full-text searc
 
 **`server.py` — the web API.** A **FastAPI** app exposing HTTP endpoints
 (`POST /v1/add`, `GET /v1/search`, `/v1/forget/...`, `/v1/audit/verify`, etc.) so
-any app — not just Python — can use Notari over the network. *Concept: REST API.*
+any app — not just Python — can use Attestari over the network. *Concept: REST API.*
 
 **`console.py` — the visual UI.** A single self-contained web page (served at `/`)
 that draws the memory as a graph with a time-travel slider, click-to-trace
 provenance, and a forget button. *Concept: a thin frontend over the API.*
 
-**`mcp.py` — the agent plug.** Exposes Notari as **MCP** tools (`add_memory`,
+**`mcp.py` — the agent plug.** Exposes Attestari as **MCP** tools (`add_memory`,
 `search_memory`, `forget_subject`, …) so AI agents (like Claude) can use it
 directly. *Concept: integration/distribution.*
 
 **`__init__.py` — the public list.** Re-exports the important classes so users
-write `from notari import Memory` instead of digging into files. *Concept: a
+write `from attestari import Memory` instead of digging into files. *Concept: a
 package's public API.*
 
-### The database — `src/notari/db/schema.sql`
+### The database — `src/attestari/db/schema.sql`
 
 SQL that creates the Postgres tables: `episode` and `fact_event` (the event log),
 `entity`/`edge` (the materialized projection, with `vector(384)` columns for
@@ -265,7 +265,7 @@ changes don't silently break things.*
 
 ### TypeScript SDK — `clients/ts/`
 
-`src/index.ts` is `NotariClient` — a typed wrapper that calls the web API from
+`src/index.ts` is `AttestariClient` — a typed wrapper that calls the web API from
 JavaScript/TypeScript. `package.json`/`tsconfig.json` configure the build.
 
 ### Config & docs
@@ -310,8 +310,8 @@ python examples/spike.py
 #    then the Postgres adapter: store_postgres.py
 
 # 3. Start Postgres and see durability + the demos:
-NOTARI_PG_PORT=5433 docker compose up -d
-NOTARI_DATABASE_URL=postgresql://notari:notari@localhost:5433/notari \
+ATTESTARI_PG_PORT=5433 docker compose up -d
+ATTESTARI_DATABASE_URL=postgresql://attestari:attestari@localhost:5433/attestari \
     python examples/audit_and_forget_demo.py
 
 # 4. Break a test on purpose (change an assert), run pytest, watch it fail.
