@@ -38,3 +38,6 @@ clients/ts/dist/
 
 # Local agent tooling (launch.json can hold a dev KEK / local env)
 .claude/
+
+# Screen-recording source for docs/deletion-demo.gif — the GIF is committed, the source is not
+deletion-demo.mp4

@@ -309,6 +309,8 @@ boundary in [docs/the-moat.md](docs/the-moat.md).
 
 ## Provable deletion + tamper-evident audit, in one demo
 
+![Attestari: a subject is forgotten — the raw row becomes unreadable ciphertext, recall returns nothing, and the tamper-evident audit chain still verifies](docs/deletion-demo.gif)
+
 Don't trust the bullet points — **break the properties and watch them get caught.**
 This runs with no database, no API key, no model download, and is self-verifying
 (every claim ends in an `assert`; it crashes if any property is false):
