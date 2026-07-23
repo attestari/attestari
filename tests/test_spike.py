@@ -76,6 +76,28 @@ def test_forget_destroys_lineage_and_issues_certificate() -> None:
     assert mem.timeline(subject_id="u1") == []
 
 
+def test_forget_dry_run_previews_without_destroying() -> None:
+    mem = _seed()
+    preview = mem.forget("u1", dry_run=True)
+    # Reports the exact blast radius a real forget would touch...
+    assert preview.dry_run is True
+    assert preview.facts_deleted >= 3
+    assert preview.episodes_deleted == 2
+    assert len(preview.manifest_hash) == 64  # sha256 hex
+    # ...but a preview is not a proof: it is left unsigned.
+    assert preview.signature is None
+    # ...and nothing was touched — the subject is fully intact and still recallable.
+    assert mem.answer("where does the user live", subject_id="u1") == "Berlin"
+    assert mem.timeline(subject_id="u1") != []
+    # A real forget afterwards matches the preview's scope exactly, and destroys.
+    cert = mem.forget("u1")
+    assert cert.dry_run is False
+    assert cert.facts_deleted == preview.facts_deleted
+    assert cert.episodes_deleted == preview.episodes_deleted
+    assert cert.manifest_hash == preview.manifest_hash
+    assert mem.answer("where does the user live", subject_id="u1") is None
+
+
 def test_dedup_noop_on_identical_readd() -> None:
     mem = Memory()
     mem.add("My name is Dana. I live in Delhi.", subject_id="u1", valid_from="2019-01-01")

@@ -302,11 +302,19 @@ class Memory:
 
     # --- deletion ------------------------------------------------------- #
 
-    def forget(self, subject_id: str, *, requested_by: str = "system") -> DeletionCertificate:
+    def forget(
+        self, subject_id: str, *, requested_by: str = "system", dry_run: bool = False
+    ) -> DeletionCertificate:
         """Right-to-be-forgotten: destroy the subject's lineage and return a
         certificate proving it happened — HMAC-signed under a KEK-derived key
         when encryption is enabled (verify with `crypto.verify_certificate`),
-        unsigned in the logical-delete (no-KEK) mode."""
+        unsigned in the logical-delete (no-KEK) mode.
+
+        With `dry_run=True` nothing is destroyed: the certificate that *would*
+        be issued is computed and returned (same subject, counts, and manifest
+        hash) so you can confirm the blast radius before committing to a one-way
+        operation. The preview is left unsigned (`signature is None`), so a dry
+        run can never be mistaken for — or verify as — a real deletion proof."""
         before = self._project()
         episodes = [e for e in before.episodes.values() if e.scope.subject_id == subject_id]
         facts = [e for e in before.edges.values() if e.subject_id == subject_id]
@@ -322,7 +330,13 @@ class Memory:
             facts_deleted=len(facts),
             manifest_hash=manifest_hash,
             issued_at=utcnow(),
+            dry_run=dry_run,
         )
+        # A preview reports the blast radius and touches nothing — no signature
+        # (it isn't a proof), no tombstone, no key destruction.
+        if dry_run:
+            return certificate
+
         # Sign under the store's cipher (the KEK is the deployment's root of
         # trust). NullCipher deployments get an unsigned certificate — honest,
         # since logical delete has no key to anchor a signature to.

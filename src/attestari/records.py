@@ -29,6 +29,7 @@ class DeletionCertificate:
     issued_at: datetime
     signature: str | None = None
     algorithm: str | None = None
+    dry_run: bool = False  # True on a forget(dry_run=True) preview — not a proof, left unsigned
 
 
 @dataclass(frozen=True, slots=True)
