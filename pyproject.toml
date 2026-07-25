@@ -1,6 +1,6 @@
 [project]
 name = "attestari"
-version = "0.0.1"
+version = "0.0.2"
 description = "The auditable memory layer for AI agents — provenance, bi-temporal recall, and provable deletion."
 readme = "README.md"
 requires-python = ">=3.11"

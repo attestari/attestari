@@ -43,7 +43,7 @@ from .store import EventStore, InMemoryEventStore
 from .store_postgres import PostgresEventStore, PostgresProjectionBackend
 from .store_sqlite import SQLiteEventStore
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 
 __all__ = [
     "Memory",
