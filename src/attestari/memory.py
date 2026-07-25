@@ -351,6 +351,12 @@ class Memory:
 
     # --- audit ---------------------------------------------------------- #
 
+    def is_forgotten(self, subject_id: str) -> bool:
+        """True if a right-to-be-forgotten tombstone is on record for this
+        subject — i.e. `forget()` was applied and the erasure is reflected in
+        the current ledger state."""
+        return subject_id in self._project().forgotten
+
     def verify_audit(self, *, deep: bool = False) -> AuditReport:
         """Verify the tamper-evident hash chain over the event log.
 

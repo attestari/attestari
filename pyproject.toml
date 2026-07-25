@@ -32,6 +32,9 @@ Repository = "https://github.com/attestari/attestari"
 Issues = "https://github.com/attestari/attestari/issues"
 Documentation = "https://github.com/attestari/attestari#readme"
 
+[project.scripts]
+attestari = "attestari.cli:main"
+
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.40"]                       # AnthropicExtractor (Claude-powered fact extraction)
 postgres = ["psycopg[binary]>=3.1", "pgvector>=0.2"]  # durable Postgres event store + projections
