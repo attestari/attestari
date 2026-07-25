@@ -1,6 +1,6 @@
 {
   "name": "@attestari/client",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "description": "TypeScript client for the Attestari memory engine REST API.",
   "type": "module",
   "main": "dist/index.js",

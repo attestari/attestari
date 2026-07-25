@@ -39,6 +39,8 @@ export interface DeletionCertificate {
   /** HMAC-SHA256 under a KEK-derived key; null when the server runs without ATTESTARI_KEK. */
   signature: string | null;
   algorithm: string | null;
+  /** True on a `forget(…, dryRun)` preview: nothing was destroyed and the certificate is left unsigned. */
+  dry_run: boolean;
 }
 
 export interface AuditReport {
@@ -137,10 +139,20 @@ export class AttestariClient {
     return this.request("GET", `/v1/provenance/${encodeURIComponent(factId)}`);
   }
 
-  async forget(subjectId: string, requestedBy = "ts-sdk"): Promise<DeletionCertificate> {
+  /** Right-to-be-forgotten. Pass `dryRun` to preview the certificate that would
+   *  be issued (counts + manifest) without destroying anything — the preview is
+   *  left unsigned (`signature === null`), so it never verifies as a real deletion. */
+  async forget(
+    subjectId: string,
+    requestedBy = "ts-sdk",
+    dryRun = false,
+  ): Promise<DeletionCertificate> {
     return this.request(
       "POST",
-      `/v1/forget/${encodeURIComponent(subjectId)}${AttestariClient.qs({ requested_by: requestedBy })}`,
+      `/v1/forget/${encodeURIComponent(subjectId)}${AttestariClient.qs({
+        requested_by: requestedBy,
+        dry_run: dryRun ? "true" : undefined,
+      })}`,
     );
   }
 

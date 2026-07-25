@@ -94,6 +94,26 @@ def test_forget_returns_signature_fields() -> None:
     # NullCipher deployment: fields present, honestly null.
     assert "signature" in cert and "algorithm" in cert
     assert cert["signature"] is None and cert["algorithm"] is None
+    assert cert["dry_run"] is False
+
+
+def test_forget_dry_run_previews_without_destroying() -> None:
+    c = _client()
+    c.post("/v1/add", json={"text": "I live in Berlin.", "subject_id": "u1"})
+
+    cert = c.post("/v1/forget/u1", params={"dry_run": "true"}).json()
+    assert cert["dry_run"] is True          # marked as a preview
+    assert cert["signature"] is None        # a preview is never signed
+    assert cert["facts_deleted"] >= 1       # reports the real blast radius
+    # Nothing destroyed — the subject is still recallable.
+    still = c.get("/v1/search", params={"q": "where does the user live", "subject_id": "u1"}).json()
+    assert still["results"] != []
+
+    # A real forget afterwards is not a dry run and does erase.
+    real = c.post("/v1/forget/u1").json()
+    assert real["dry_run"] is False
+    gone = c.get("/v1/search", params={"q": "where does the user live", "subject_id": "u1"}).json()
+    assert gone["results"] == []
 
 
 def test_malformed_dates_are_422_not_500() -> None:

@@ -199,7 +199,9 @@ def create_app(memory: Memory | None = None) -> FastAPI:
         "/v1/forget/{subject_id}",
         summary="Right-to-be-forgotten: crypto-shred + signed certificate",
     )
-    def forget(subject_id: str, requested_by: str = "system") -> dict[str, Any]:
+    def forget(
+        subject_id: str, requested_by: str = "system", dry_run: bool = False
+    ) -> dict[str, Any]:
         """Erase one subject's entire scope (GDPR Art. 17). With encryption
         enabled (`ATTESTARI_KEK`), their per-subject key is **destroyed**, so the
         retained ciphertext is unrecoverable — including in backups of the
@@ -208,8 +210,12 @@ def create_app(memory: Memory | None = None) -> FastAPI:
         the certificate is **signed** (HMAC-SHA256 under a KEK-derived key —
         verify offline with `attestari.crypto.verify_certificate`); without it,
         `signature` is null. The audit chain remains verifiable either way.
+
+        Pass `dry_run=true` to preview the certificate that *would* be issued
+        (same counts + manifest) **without destroying anything** — the preview
+        is left unsigned, so it can never verify as a real deletion.
         """
-        cert = mem.forget(subject_id, requested_by=requested_by)
+        cert = mem.forget(subject_id, requested_by=requested_by, dry_run=dry_run)
         return {
             "certificate_id": cert.certificate_id,
             "subject_id": cert.subject_id,
@@ -220,6 +226,7 @@ def create_app(memory: Memory | None = None) -> FastAPI:
             "issued_at": _iso(cert.issued_at),
             "signature": cert.signature,
             "algorithm": cert.algorithm,
+            "dry_run": cert.dry_run,
         }
 
     @app.get("/v1/conflicts", summary="Values that contradicted each other over time")
