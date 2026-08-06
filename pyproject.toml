@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Attestari contributors" }]
-keywords = ["ai", "agents", "memory", "knowledge-graph", "llm", "rag", "gdpr", "provenance"]
+keywords = ["ai", "agents", "memory", "knowledge-graph", "llm", "rag", "gdpr", "provenance", "mcp", "deletion", "audit", "event-sourcing", "compliance", "langchain"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

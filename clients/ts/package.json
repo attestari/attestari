@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
-  "keywords": ["ai", "agents", "memory", "attestari"],
+  "keywords": ["ai", "agents", "memory", "attestari", "mcp", "llm", "rag", "deletion", "gdpr", "audit", "provenance", "langchain", "typescript", "sdk", "event-sourcing"],
   "license": "Apache-2.0",
   "author": "Attestari",
   "homepage": "https://github.com/attestari/attestari#readme",
