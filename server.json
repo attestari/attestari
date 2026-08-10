@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.attestari/attestari",
   "title": "Attestari",
-  "description": "Auditable memory for AI agents: remember across sessions, trace every fact to its source, and provably delete a user — crypto-shred plus a signed certificate and a tamper-evident audit chain.",
+  "description": "Auditable memory for AI agents: provable deletion, tamper-evident audit, time-travel recall.",
   "repository": {
     "url": "https://github.com/attestari/attestari",
     "source": "github"
