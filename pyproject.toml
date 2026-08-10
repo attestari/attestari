@@ -1,6 +1,6 @@
 [project]
 name = "attestari"
-version = "0.0.4"
+version = "0.0.5"
 description = "The auditable memory layer for AI agents — provenance, bi-temporal recall, and provable deletion."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -34,6 +34,9 @@ Documentation = "https://github.com/attestari/attestari#readme"
 
 [project.scripts]
 attestari = "attestari.cli:main"
+# The MCP server as a command, so clients can spawn it directly (and `uvx --from
+# "attestari[server]" attestari-mcp` works) instead of `python -m attestari.mcp`.
+attestari-mcp = "attestari.mcp:main"
 
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.40"]                       # AnthropicExtractor (Claude-powered fact extraction)

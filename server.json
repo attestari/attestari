@@ -1,0 +1,58 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.attestari/attestari",
+  "title": "Attestari",
+  "description": "Auditable memory for AI agents: remember across sessions, trace every fact to its source, and provably delete a user — crypto-shred plus a signed certificate and a tamper-evident audit chain.",
+  "repository": {
+    "url": "https://github.com/attestari/attestari",
+    "source": "github"
+  },
+  "version": "0.0.5",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "attestari",
+      "version": "0.0.5",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--from",
+          "value": "attestari[server]",
+          "description": "The MCP server lives in the `server` extra; the core package stays dependency-free.",
+          "isRequired": true
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "ATTESTARI_KEK",
+          "description": "Base64 32-byte root key. Set it to enable encryption at rest and cryptographic erasure (forget() destroys the subject's key and signs the certificate). Without it, forget() is a logical delete and certificates are left unsigned.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "ATTESTARI_DATABASE_URL",
+          "description": "Postgres DSN. Set it to use Postgres + pgvector instead of the default local SQLite file (concurrent access, indexed hybrid search).",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "ATTESTARI_SQLITE_PATH",
+          "description": "Where the default SQLite ledger lives.",
+          "isRequired": false,
+          "default": "~/.attestari/attestari.db"
+        },
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "description": "Enables Claude-powered fact extraction; falls back to the built-in regex extractor when unset.",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

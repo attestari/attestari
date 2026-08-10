@@ -1,5 +1,7 @@
 # Attestari
 
+<!-- mcp-name: io.github.attestari/attestari -->
+
 **The auditable memory layer for AI agents.** Give your agent long-term memory —
 like any memory layer — except every fact carries a receipt (where it came from,
 when), it runs on plain Postgres, the audit trail is tamper-evident, and any
@@ -197,8 +199,8 @@ Register it in your MCP client's config (e.g. Claude Desktop's
 {
   "mcpServers": {
     "attestari": {
-      "command": "python",
-      "args": ["-m", "attestari.mcp"],
+      "command": "attestari-mcp",
+      "args": [],
       "env": {
         "ATTESTARI_SQLITE_PATH": "~/.attestari/attestari.db",
         "ANTHROPIC_API_KEY": "sk-ant-...",
@@ -212,7 +214,9 @@ Only `command`/`args` are required. Durable by default (memories go to the local
 SQLite file, so they survive app restarts); the `env` block is where per-server
 config lives — add `ATTESTARI_DATABASE_URL` to use Postgres instead of SQLite,
 `ANTHROPIC_API_KEY` to upgrade extraction to Claude, `ATTESTARI_KEK` to enable
-crypto-shred. To run it standalone (e.g. to debug): `python -m attestari.mcp`.
+crypto-shred. To run it standalone (e.g. to debug): `attestari-mcp` (or
+`python -m attestari.mcp`). Without a local install, MCP clients can spawn it
+straight from PyPI: `uvx --from "attestari[server]" attestari-mcp`.
 
 **From TypeScript** — the TS client talks to the REST API, so **start the server
 first** (see above; it defaults to `http://localhost:8000`). Then see
