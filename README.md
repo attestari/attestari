@@ -7,7 +7,7 @@ user's data can be **provably deleted** with a signed certificate.
 
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![python](https://img.shields.io/badge/python-3.11%2B-blue)
-![tests](https://img.shields.io/badge/tests-88%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-102%20passing-brightgreen)
 ![deps](https://img.shields.io/badge/core-zero%20dependencies-brightgreen)
 
 ```python
@@ -41,6 +41,7 @@ has **zero dependencies**.
 - [REST API](#rest-api)
 - [Configuration](#configuration)
 - [Provable deletion + tamper-evident audit, in one demo](#provable-deletion--tamper-evident-audit-in-one-demo)
+- [For auditors and DPOs](#for-auditors-and-dpos)
 - [How it works](#how-it-works)
 - [Project layout](#project-layout)
 - [Docs & contributing](#docs--contributing)
@@ -337,6 +338,32 @@ It shows: a fact traced to its source, a subject forgotten, the raw row confirme
 to be unreadable ciphertext, recall returning nothing — and the **audit chain
 still valid** after the erasure.
 
+## For auditors and DPOs
+
+The people who have to *answer* for an AI system's memory get their own docs in
+**[auditor/](auditor/)** — a plain-language [one-pager](auditor/dpo-one-pager.md)
+(what's guaranteed, what isn't, how to check it yourself), an [EU AI Act Art. 12
+mapping](auditor/eu-ai-act-article-12.md), and a [GDPR Art. 17
+note](auditor/gdpr-article-17.md) on cryptographic erasure and the deployment
+policies it depends on.
+
+Any deployment can produce a dated snapshot of its own verifiable state:
+
+```bash
+attestari evidence --deep --out ./evidence   # EVIDENCE.md + evidence.json
+```
+
+The bundle carries the audit-chain result and head hash, an erasure register
+with every request re-checked against the current ledger, and the retained
+deletion certificates. Every claim is **re-derived from the live ledger** when
+the bundle is generated — it's evidence because you can regenerate it, with read
+access and no cooperation from whoever runs the system.
+
+```bash
+attestari verify --deep          # re-check the chain, re-hashing content
+attestari verify --user u_123    # confirm one subject's erasure; non-zero exit if not
+```
+
 ## How it works
 
 The source of truth is an **append-only event log**; everything you query (the
@@ -354,6 +381,8 @@ src/attestari/         the engine — events, store, projection, retrieve, memor
                     crypto (shred), audit (hash chain), predicates, resolver
 src/attestari/server.py, console.py   FastAPI REST API + the graph console
 src/attestari/mcp.py   the MCP server
+src/attestari/cli.py, evidence.py     `attestari verify` + the evidence bundle
+auditor/            the auditor pack — DPO one-pager, AI Act + GDPR mappings
 examples/           runnable demos — start with spike.py
 eval/               quality + retrieval-latency harness
 clients/ts/         the TypeScript SDK (@attestari/client)
@@ -365,6 +394,7 @@ docker-compose.yml  Postgres + pgvector
 ## Docs & contributing
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — the design
+- [auditor/](auditor/) — for DPOs, compliance, and internal audit
 - [LEARN.md](LEARN.md) — how Attestari works, from scratch
 - [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup, good first issues
 - [SECURITY.md](SECURITY.md) — reporting vulnerabilities
@@ -372,7 +402,7 @@ docker-compose.yml  Postgres + pgvector
 ## Status
 
 The engine and its differentiators — verifiable deletion, tamper-evident audit,
-bi-temporal provenance, Postgres-native retrieval — are **built and tested** (88
+bi-temporal provenance, Postgres-native retrieval — are **built and tested** (102
 tests; Postgres p95 ≈ 1 ms).
 
 ## License

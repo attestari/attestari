@@ -437,6 +437,33 @@ class PostgresProjectionBackend:
             ),
         )
 
+    def certificates(self) -> list[DeletionCertificate]:
+        """Read back the persisted deletion certificates, oldest first.
+
+        This is the tier's certificate register — what an evidence bundle (or an
+        auditor with read access) lists without needing the original caller to
+        have kept their copy from `forget()`."""
+        rows = self._conn.execute(
+            """SELECT certificate_id, subject_id, requested_by,
+                      episodes_count, facts_count, manifest_hash, issued_at,
+                      signature, algorithm
+                 FROM deletion_certificate ORDER BY issued_at"""
+        ).fetchall()
+        return [
+            DeletionCertificate(
+                certificate_id=str(r["certificate_id"]),
+                subject_id=r["subject_id"],
+                requested_by=r["requested_by"],
+                episodes_deleted=r["episodes_count"],
+                facts_deleted=r["facts_count"],
+                manifest_hash=r["manifest_hash"],
+                issued_at=r["issued_at"],
+                signature=r["signature"],
+                algorithm=r["algorithm"],
+            )
+            for r in rows
+        ]
+
     def rebuild(self) -> None:
         """Materialise entity + edge tables from the event log (rebuildable)."""
         proj = self._projector.build(self.store.events())

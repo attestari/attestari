@@ -102,6 +102,29 @@ def test_postgres_forget_persists_certificate_and_isolates() -> None:
     assert mem2.answer("where does the user live", subject_id="u2") == "Chennai"
 
 
+def test_postgres_evidence_bundle_lists_the_certificate_register() -> None:
+    """On the tier that persists certificates, the evidence bundle reads them
+    back — an auditor doesn't depend on whoever called forget() keeping their
+    copy. (Other tiers report `certificates: None`; see tests/test_evidence.py.)"""
+    from attestari.evidence import build_evidence
+
+    _reset()
+    mem = Memory.postgres(DSN)
+    mem.add("My name is Dana. I live in Delhi.", subject_id="u1", valid_from="2019-01-01")
+    mem.add("I'm Ravi. I live in Chennai.", subject_id="u2", valid_from="2021-01-01")
+    mem.forget("u1", requested_by="dpo@example.com")
+
+    bundle = build_evidence(mem, deep=True)
+    assert bundle["ok"] is True
+    assert [row["subject_id"] for row in bundle["erasures"]] == ["u1"]
+
+    certs = bundle["certificates"]
+    assert certs is not None and len(certs) == 1
+    assert certs[0]["subject_id"] == "u1"
+    assert certs[0]["requested_by"] == "dpo@example.com"
+    assert certs[0]["facts_deleted"] >= 2
+
+
 def test_initdb_is_packaged_and_idempotent() -> None:
     """The schema ships inside the package (pip-only users need no clone), and
     applying it to an already-initialised database is a no-op, not an error."""
