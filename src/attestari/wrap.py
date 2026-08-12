@@ -58,6 +58,12 @@ class Adapter:
     search: str | Callable[..., Any] = "search"
     delete: str | Callable[..., Any] = "delete_all"
     subject_kwarg: str = "user_id"
+    # Optional: read back whatever the store still holds for a subject. When
+    # set, `forget()` calls it *after* the delete and only reports success if
+    # nothing remains — see WrappedMemory.forget. Leaving it unset means a
+    # deletion is trusted on the delete call's say-so, which is exactly the kind
+    # of promise this project exists to replace with a check.
+    verify: str | Callable[..., Any] | None = None
 
     def _bind(self, client: Any, op: str | Callable[..., Any], label: str) -> Callable[..., Any]:
         if callable(op):
@@ -83,16 +89,38 @@ class Adapter:
     def call_delete(self, client: Any, subject_id: str, **kw: Any) -> Any:
         return self._bind(client, self.delete, "delete")(**{self.subject_kwarg: subject_id}, **kw)
 
+    def call_verify(self, client: Any, subject_id: str) -> Any:
+        if self.verify is None:
+            raise RuntimeError("adapter has no verify operation")
+        return self._bind(client, self.verify, "verify")(**{self.subject_kwarg: subject_id})
+
 
 def mem0_adapter() -> Adapter:
-    """Mem0's surface: `add(messages, user_id=…)`, `search(query, user_id=…)`,
-    `delete_all(user_id=…)`."""
-    return Adapter(add="add", search="search", delete="delete_all", subject_kwarg="user_id")
+    """Mem0 2.x — both `mem0.Memory` (local) and `mem0.MemoryClient` (hosted).
+
+    Verified against mem0ai 2.0.18. The asymmetry is theirs and is easy to get
+    wrong: `add` and `delete_all` take the subject as a top-level `user_id`,
+    but `search`/`get_all` require it **inside `filters`** — the local class
+    actively rejects a top-level `user_id` there (`_reject_top_level_entity_params`),
+    which is good of them: a silently unfiltered search would return other
+    subjects' memories.
+    """
+    return Adapter(
+        add="add",
+        search=lambda client, query, **kw: client.search(
+            query, filters={"user_id": kw["user_id"]}
+        ),
+        delete="delete_all",
+        subject_kwarg="user_id",
+        # Read back what survived the delete rather than trusting its return.
+        verify=lambda client, **kw: client.get_all(filters={"user_id": kw["user_id"]}),
+    )
 
 
 def zep_adapter() -> Adapter:
-    """Zep-style surface keyed on `session_id`. Verify against your client
-    version — Zep's API has moved more than Mem0's."""
+    """Zep-style surface keyed on `session_id`. **Unverified** against a live
+    client — Zep's API has moved more than Mem0's, so check it against your
+    version and pass your own `Adapter` if it differs."""
     return Adapter(add="add", search="search", delete="delete", subject_kwarg="session_id")
 
 
@@ -103,13 +131,21 @@ class DeletionReceipt:
 
     `complete` is True only when *both* halves succeeded. A downstream failure
     is reported, not swallowed — an erasure that only half happened is exactly
-    the thing this system exists to make visible."""
+    the thing this system exists to make visible.
+
+    `downstream_verified` distinguishes two very different situations that a
+    bare success flag would blur: **True** means we read the store back after
+    the delete and nothing remained; **None** means the delete call reported
+    success and we took its word for it (no `verify` on the adapter). Only the
+    first is evidence."""
 
     certificate: DeletionCertificate
     downstream_called: bool
     downstream_ok: bool
     downstream_result: Any = None
     downstream_error: str | None = None
+    downstream_verified: bool | None = None
+    downstream_remaining: Any = None
 
     @property
     def complete(self) -> bool:
@@ -174,19 +210,44 @@ class WrappedMemory:
             )
 
         called, ok, result, error = True, False, None, None
+        verified: bool | None = None
+        remaining: Any = None
         try:
             result = self.adapter.call_delete(self.client, subject_id)
             ok = True
         except Exception as exc:  # noqa: BLE001 - the failure is the evidence
             error = f"{type(exc).__name__}: {exc}"
 
+        # Don't take the delete call's word for it. If the adapter can read the
+        # subject back, do — a store that returns 200 and keeps the data is the
+        # precise failure this product exists to catch, and it is invisible to
+        # anyone who only checks the response code.
+        if ok and self.adapter.verify is not None:
+            try:
+                remaining = self.adapter.call_verify(self.client, subject_id)
+                verified = not _is_nonempty(remaining)
+                if not verified:
+                    ok = False
+                    error = (
+                        "downstream reported success but data for the subject "
+                        "remains after deletion"
+                    )
+            except Exception as exc:  # noqa: BLE001 - an unverifiable delete is not a verified one
+                verified = False
+                ok = False
+                error = f"post-delete verification failed — {type(exc).__name__}: {exc}"
+
         # Record the downstream outcome *before* shredding, under wrap's own
         # scope so it survives the subject's erasure (see WRAP_AGENT_ID). This
         # is what makes "we asked, and here is what came back" auditable rather
         # than merely asserted.
+        checked = {True: "verified empty", False: "VERIFICATION FAILED", None: "unverified"}[
+            verified
+        ]
         self.ledger.add(
             f"downstream deletion for subject {subject_id}: "
-            f"{'ok' if ok else 'FAILED'}{'' if error is None else ' — ' + error}",
+            f"{'ok' if ok else 'FAILED'} ({checked})"
+            f"{'' if error is None else ' — ' + error}",
             agent_id=WRAP_AGENT_ID,
             source_ref=f"attestari-wrap:delete:{subject_id}",
         )
@@ -198,6 +259,8 @@ class WrappedMemory:
             downstream_ok=ok,
             downstream_result=result,
             downstream_error=error,
+            downstream_verified=verified,
+            downstream_remaining=remaining,
         )
 
     # --- the governed view ---------------------------------------------- #
@@ -245,6 +308,26 @@ def wrap(
     if adapter is None:
         adapter = _infer_adapter(client)
     return WrappedMemory(client, ledger, adapter, requested_by=requested_by)
+
+
+def _is_nonempty(result: Any) -> bool:
+    """Did a read-back turn up anything for the subject?
+
+    Memory layers answer "what do you still hold" in incompatible shapes: a
+    list, or a dict like `{"results": [...]}`, or `{"memories": [...]}`. Treat
+    an unrecognised non-empty object as *data still present* — for a deletion
+    check, guessing "probably empty" is the dangerous direction to be wrong in.
+    """
+    if result is None:
+        return False
+    if isinstance(result, dict):
+        for key in ("results", "memories", "data", "items"):
+            if key in result:
+                return bool(result[key])
+        return bool(result)
+    if isinstance(result, (list, tuple, set)):
+        return bool(result)
+    return True
 
 
 def _infer_adapter(client: Any) -> Adapter:

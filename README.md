@@ -9,7 +9,7 @@ user's data can be **provably deleted** with a signed certificate.
 
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![python](https://img.shields.io/badge/python-3.11%2B-blue)
-![tests](https://img.shields.io/badge/tests-111%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-113%20passing-brightgreen)
 ![deps](https://img.shields.io/badge/core-zero%20dependencies-brightgreen)
 
 ```python
@@ -357,11 +357,20 @@ governed.add("I live in Berlin.", subject_id="u1")        # recorded, then store
 governed.search("where do I live", subject_id="u1")       # straight through
 receipt = governed.forget("u1")                           # both stores + proof
 
-receipt.complete            # True only if BOTH halves succeeded
-receipt.certificate         # Attestari's signed deletion certificate
-receipt.downstream_error    # what the wrapped store said, if it refused
+receipt.complete             # True only if BOTH halves succeeded
+receipt.certificate          # Attestari's signed deletion certificate
+receipt.downstream_verified  # True = we read the store back and it was empty
+receipt.downstream_error     # what the wrapped store said, if it refused
 governed.verify_audit(deep=True)                          # the chain still holds
 ```
+
+**It doesn't take the delete call's word for it.** After deleting, `forget()`
+reads the subject back out of the wrapped store. A store that returns
+`{"deleted": true}` and keeps the rows is caught right there —
+`downstream_verified` is `False`, `complete` is `False`, and the discrepancy
+goes into the audit chain. If the adapter has no read-back operation,
+`downstream_verified` is `None` rather than `True`: "nobody checked" and
+"checked and clean" are different claims, and only one of them is evidence.
 
 Writes are recorded in the tamper-evident chain before being passed downstream;
 reads pass through untouched (retrieval is why you kept your store); `forget()`
@@ -445,7 +454,7 @@ docker-compose.yml  Postgres + pgvector
 ## Status
 
 The engine and its differentiators — verifiable deletion, tamper-evident audit,
-bi-temporal provenance, Postgres-native retrieval — are **built and tested** (111
+bi-temporal provenance, Postgres-native retrieval — are **built and tested** (113
 tests; Postgres p95 ≈ 1 ms).
 
 ## License

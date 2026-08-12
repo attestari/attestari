@@ -8,6 +8,8 @@ is on the record and can't be quietly rewritten afterwards.
 
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 
 from attestari import Memory
@@ -15,25 +17,39 @@ from attestari.wrap import WRAP_AGENT_ID, Adapter, WrappedMemory, mem0_adapter, 
 
 
 class FakeClient:
-    """Mem0-shaped: add(text, user_id=…), search(query, user_id=…), delete_all(user_id=…)."""
+    """Mem0 2.x-shaped: `user_id` on add/delete_all, `filters` on search/get_all.
 
-    def __init__(self, *, fail_delete: bool = False):
+    That asymmetry is real (verified against mem0ai 2.0.18) and is what
+    `mem0_adapter()` exists to absorb, so the fake mirrors it rather than a
+    tidier API we wish they had.
+
+    `lying_delete` models the failure mode that matters most: a store that
+    reports success and keeps the data.
+    """
+
+    def __init__(self, *, fail_delete: bool = False, lying_delete: bool = False):
         self.store: dict[str, list[str]] = {}
         self.searches: list[tuple[str, str | None]] = []
         self.fail_delete = fail_delete
+        self.lying_delete = lying_delete
 
     def add(self, text, user_id=None, **kw):
         self.store.setdefault(user_id, []).append(text)
         return {"id": f"mem-{len(self.store[user_id])}", "user_id": user_id}
 
-    def search(self, query, user_id=None, **kw):
+    def search(self, query, filters=None, **kw):
+        user_id = (filters or {}).get("user_id")
         self.searches.append((query, user_id))
         return [{"text": t} for t in self.store.get(user_id, [])]
+
+    def get_all(self, filters=None, **kw):
+        return {"results": list(self.store.get((filters or {}).get("user_id"), []))}
 
     def delete_all(self, user_id=None, **kw):
         if self.fail_delete:
             raise RuntimeError("upstream 503")
-        self.store.pop(user_id, None)
+        if not self.lying_delete:
+            self.store.pop(user_id, None)
         return {"deleted": True, "user_id": user_id}
 
 
@@ -71,6 +87,7 @@ def test_forget_deletes_both_sides_and_returns_a_complete_receipt() -> None:
 
     assert receipt.complete is True
     assert receipt.downstream_ok is True
+    assert receipt.downstream_verified is True  # read back, not merely reported
     assert receipt.certificate.subject_id == "u1"
     assert receipt.certificate.requested_by == "dpo@example.com"
     # Both stores dropped u1 and neither touched u2.
@@ -94,6 +111,36 @@ def test_downstream_failure_is_reported_not_swallowed() -> None:
     assert governed.is_forgotten("u1")
     assert client.store["u1"]                 # downstream still holds it — visibly
     assert governed.verify_audit(deep=True).ok
+
+
+def test_a_store_that_reports_success_but_keeps_the_data_is_caught() -> None:
+    """The failure a response code can't reveal, and the reason `verify` exists:
+    delete_all returns {"deleted": True} while the rows are still there."""
+    governed, client = _wrapped(lying_delete=True)
+    governed.add("I live in Delhi.", subject_id="u1")
+
+    receipt = governed.forget("u1")
+
+    assert receipt.downstream_result == {"deleted": True, "user_id": "u1"}  # it claimed success
+    assert receipt.downstream_verified is False                            # we checked
+    assert receipt.downstream_ok is False
+    assert receipt.complete is False
+    assert "remains after deletion" in receipt.downstream_error
+    assert receipt.downstream_remaining == {"results": ["I live in Delhi."]}
+    assert governed.verify_audit(deep=True).ok
+
+
+def test_without_a_verify_operation_the_result_is_unverified_not_verified() -> None:
+    """No read-back capability must never be reported as a successful check."""
+    client = FakeClient(lying_delete=True)
+    governed = wrap(client, ledger=Memory(), adapter=Adapter(verify=None))
+    governed.add("I live in Delhi.", subject_id="u1")
+
+    receipt = governed.forget("u1")
+
+    assert receipt.downstream_ok is True        # we only have its word
+    assert receipt.downstream_verified is None  # ...and we say so, rather than claiming True
+    assert client.store["u1"]                   # the data is, in fact, still there
 
 
 def test_the_downstream_delete_record_survives_the_subject_erasure() -> None:
@@ -171,3 +218,32 @@ def test_passthrough_reaches_vendor_specific_methods() -> None:
     governed.add("I live in Delhi.", subject_id="u1")
     # `store` is the fake's own attribute, not part of the governed surface.
     assert governed.store == client.store
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("mem0") is None,
+    reason="mem0 not installed (pip install mem0ai) — contract check only runs when it is",
+)
+def test_mem0_adapter_matches_the_real_mem0_signatures() -> None:
+    """Bind our calls against mem0's own classes, so their next API change fails
+    here instead of in someone's deletion path.
+
+    This is the check a hand-written fake cannot do: mem0 2.x takes `user_id`
+    on add/delete_all but requires it inside `filters` on search/get_all, and
+    getting that wrong is how you end up reporting a deletion that never
+    filtered to the right subject.
+    """
+    import inspect
+
+    from mem0 import Memory as Mem0Local
+    from mem0 import MemoryClient as Mem0Hosted
+
+    calls = [
+        ("add", ("text",), {"user_id": "u1"}),
+        ("search", ("q",), {"filters": {"user_id": "u1"}}),
+        ("delete_all", (), {"user_id": "u1"}),
+        ("get_all", (), {"filters": {"user_id": "u1"}}),
+    ]
+    for cls in (Mem0Local, Mem0Hosted):
+        for name, args, kwargs in calls:
+            inspect.signature(getattr(cls, name)).bind(None, *args, **kwargs)
