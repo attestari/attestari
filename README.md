@@ -9,7 +9,7 @@ user's data can be **provably deleted** with a signed certificate.
 
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![python](https://img.shields.io/badge/python-3.11%2B-blue)
-![tests](https://img.shields.io/badge/tests-102%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-111%20passing-brightgreen)
 ![deps](https://img.shields.io/badge/core-zero%20dependencies-brightgreen)
 
 ```python
@@ -43,6 +43,7 @@ has **zero dependencies**.
 - [REST API](#rest-api)
 - [Configuration](#configuration)
 - [Provable deletion + tamper-evident audit, in one demo](#provable-deletion--tamper-evident-audit-in-one-demo)
+- [Already using Mem0 or Zep? Wrap it](#already-using-mem0-or-zep-wrap-it)
 - [For auditors and DPOs](#for-auditors-and-dpos)
 - [How it works](#how-it-works)
 - [Project layout](#project-layout)
@@ -342,6 +343,43 @@ It shows: a fact traced to its source, a subject forgotten, the raw row confirme
 to be unreadable ciphertext, recall returning nothing — and the **audit chain
 still valid** after the erasure.
 
+## Already using Mem0 or Zep? Wrap it
+
+You don't have to replace your memory layer to get an audit trail. `wrap()` puts
+Attestari in front of the client you already use:
+
+```python
+from attestari.wrap import wrap
+
+governed = wrap(mem0_client)                              # or zep, or your own
+
+governed.add("I live in Berlin.", subject_id="u1")        # recorded, then stored
+governed.search("where do I live", subject_id="u1")       # straight through
+receipt = governed.forget("u1")                           # both stores + proof
+
+receipt.complete            # True only if BOTH halves succeeded
+receipt.certificate         # Attestari's signed deletion certificate
+receipt.downstream_error    # what the wrapped store said, if it refused
+governed.verify_audit(deep=True)                          # the chain still holds
+```
+
+Writes are recorded in the tamper-evident chain before being passed downstream;
+reads pass through untouched (retrieval is why you kept your store); `forget()`
+deletes downstream, crypto-shreds Attestari's copy, and records what the
+downstream store actually did — including failure. Method names and the subject
+keyword are configurable via `Adapter`, so this works against a bare vector
+store too.
+
+**What wrapping does and doesn't prove.** Attestari can't cryptographically
+shred data inside someone else's service — it doesn't hold their keys. A wrapped
+deployment proves the deletion was requested, that the downstream delete was
+called and what it returned, that Attestari's own copy is unrecoverable, and
+that none of that was altered afterwards. That's an *auditable deletion record
+across both systems*, not crypto-shred everywhere: a wrapped store is only as
+erasable as its own delete endpoint is honest, and wrapping turns that
+endpoint's behaviour into evidence instead of a promise. For full cryptographic
+erasure, the data has to live in Attestari itself.
+
 ## For auditors and DPOs
 
 The people who have to *answer* for an AI system's memory get their own docs in
@@ -386,6 +424,7 @@ src/attestari/         the engine — events, store, projection, retrieve, memor
 src/attestari/server.py, console.py   FastAPI REST API + the graph console
 src/attestari/mcp.py   the MCP server
 src/attestari/cli.py, evidence.py     `attestari verify` + the evidence bundle
+src/attestari/wrap.py  govern an existing memory layer (Mem0, Zep, …)
 auditor/            the auditor pack — DPO one-pager, AI Act + GDPR mappings
 examples/           runnable demos — start with spike.py
 eval/               quality + retrieval-latency harness
@@ -406,7 +445,7 @@ docker-compose.yml  Postgres + pgvector
 ## Status
 
 The engine and its differentiators — verifiable deletion, tamper-evident audit,
-bi-temporal provenance, Postgres-native retrieval — are **built and tested** (102
+bi-temporal provenance, Postgres-native retrieval — are **built and tested** (111
 tests; Postgres p95 ≈ 1 ms).
 
 ## License
