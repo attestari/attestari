@@ -9,7 +9,7 @@ user's data can be **provably deleted** with a signed certificate.
 
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![python](https://img.shields.io/badge/python-3.11%2B-blue)
-![tests](https://img.shields.io/badge/tests-113%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-122%20passing-brightgreen)
 ![deps](https://img.shields.io/badge/core-zero%20dependencies-brightgreen)
 
 ```python
@@ -299,6 +299,9 @@ boundary in [docs/the-moat.md](docs/the-moat.md).
 | `ATTESTARI_SQLITE_PATH` | Where `Memory.local()`-backed server/MCP keep the SQLite file (default `~/.attestari/attestari.db`). |
 | `ATTESTARI_KEK` | Root key-encryption key; turns on crypto-shred deletion. |
 | `ATTESTARI_PG_PORT` | Host port for the bundled `docker compose` Postgres (default 5432). |
+| `ATTESTARI_WRAP_UPSTREAM` | Base URL of a memory service to govern; mounts the `/v1/wrap/*` endpoints (unset = no wrap routes). |
+| `ATTESTARI_WRAP_UPSTREAM_TOKEN` | Sent to the upstream as `Authorization: Bearer …`. |
+| `ATTESTARI_WRAP_*_PATH` | Override the upstream paths — `ADD`, `SEARCH`, `DELETE`, `GET_ALL` (defaults `/add`, `/search`, `/delete`, `/get_all`). Set `GET_ALL` empty to disable the post-delete read-back. |
 | `ANTHROPIC_API_KEY` | Enables Claude fact extraction — the server/MCP upgrade from the regex extractor automatically. |
 | `ATTESTARI_EXTRACTOR_MODEL` | Override the extraction model (default `claude-opus-4-8`). |
 
@@ -363,6 +366,24 @@ receipt.downstream_verified  # True = we read the store back and it was empty
 receipt.downstream_error     # what the wrapped store said, if it refused
 governed.verify_audit(deep=True)                          # the chain still holds
 ```
+
+**Not on Python?** Point your app at the Attestari server instead of at your
+memory service and get the same guarantees over REST:
+
+```bash
+ATTESTARI_WRAP_UPSTREAM=https://memory.internal uvicorn attestari.server:app
+```
+
+```
+POST /v1/wrap/add          {"text": …, "subject_id": …}   # recorded, then forwarded
+POST /v1/wrap/search       {"query": …, "subject_id": …}  # passthrough
+POST /v1/wrap/forget/{id}                                 # both stores + evidence
+```
+
+A partial erasure returns **409**, not 200 — a caller checking only the status
+code must never read a half-completed deletion as success. The routes appear
+only when an upstream is configured. See `attestari.wrap_http` for the small
+JSON contract the upstream is expected to speak (stdlib-only, no new deps).
 
 **It doesn't take the delete call's word for it.** After deleting, `forget()`
 reads the subject back out of the wrapped store. A store that returns
@@ -433,7 +454,8 @@ src/attestari/         the engine — events, store, projection, retrieve, memor
 src/attestari/server.py, console.py   FastAPI REST API + the graph console
 src/attestari/mcp.py   the MCP server
 src/attestari/cli.py, evidence.py     `attestari verify` + the evidence bundle
-src/attestari/wrap.py  govern an existing memory layer (Mem0, Zep, …)
+src/attestari/wrap.py, wrap_http.py   govern an existing memory layer (Mem0,
+                    Zep, or any HTTP service) instead of replacing it
 auditor/            the auditor pack — DPO one-pager, AI Act + GDPR mappings
 examples/           runnable demos — start with spike.py
 eval/               quality + retrieval-latency harness
@@ -454,7 +476,7 @@ docker-compose.yml  Postgres + pgvector
 ## Status
 
 The engine and its differentiators — verifiable deletion, tamper-evident audit,
-bi-temporal provenance, Postgres-native retrieval — are **built and tested** (113
+bi-temporal provenance, Postgres-native retrieval — are **built and tested** (122
 tests; Postgres p95 ≈ 1 ms).
 
 ## License

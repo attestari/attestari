@@ -84,6 +84,44 @@ def _edge_dict(e: Edge) -> dict[str, Any]:
     }
 
 
+def _wrap_upstream(mem: Memory) -> Any:
+    """Build the governed client from `ATTESTARI_WRAP_UPSTREAM`, or None.
+
+    The wrap endpoints exist only when an upstream is configured — mounting
+    routes that would 500 on every call is worse than not having them, and
+    their absence from `/docs` is the honest signal that nothing is being
+    governed.
+    """
+    base_url = os.environ.get("ATTESTARI_WRAP_UPSTREAM")
+    if not base_url:
+        return None
+    from .wrap import wrap
+    from .wrap_http import HTTPMemoryClient, http_adapter
+
+    headers = {}
+    if token := os.environ.get("ATTESTARI_WRAP_UPSTREAM_TOKEN"):
+        headers["Authorization"] = f"Bearer {token}"
+    client = HTTPMemoryClient(
+        base_url,
+        add_path=os.environ.get("ATTESTARI_WRAP_ADD_PATH", "/add"),
+        search_path=os.environ.get("ATTESTARI_WRAP_SEARCH_PATH", "/search"),
+        delete_path=os.environ.get("ATTESTARI_WRAP_DELETE_PATH", "/delete"),
+        get_all_path=os.environ.get("ATTESTARI_WRAP_GET_ALL_PATH", "/get_all") or None,
+        headers=headers,
+    )
+    return wrap(client, ledger=mem, adapter=http_adapter(verify=client.get_all_path is not None))
+
+
+class WrapAddRequest(BaseModel):
+    text: str
+    subject_id: str
+
+
+class WrapSearchRequest(BaseModel):
+    query: str
+    subject_id: str
+
+
 class AddRequest(BaseModel):
     text: str
     subject_id: str | None = None
@@ -228,6 +266,79 @@ def create_app(memory: Memory | None = None) -> FastAPI:
             "algorithm": cert.algorithm,
             "dry_run": cert.dry_run,
         }
+
+    # --- wrap: govern an upstream memory service over HTTP ----------------- #
+    # Only mounted when ATTESTARI_WRAP_UPSTREAM points somewhere. This is how a
+    # non-Python app gets the governance layer: point it here instead of at the
+    # memory service, and every write is recorded and every deletion evidenced.
+    governed = _wrap_upstream(mem)
+    if governed is not None:
+
+        @app.post("/v1/wrap/add", summary="Record a write, then pass it to the upstream store")
+        def wrap_add(req: WrapAddRequest) -> dict[str, Any]:
+            """Write through the governance layer: the message is recorded in
+            the tamper-evident chain *first*, then forwarded upstream. An
+            upstream failure propagates (502) with the attempt already on
+            record."""
+            try:
+                result = governed.add(req.text, subject_id=req.subject_id)
+            except Exception as exc:  # noqa: BLE001 - surfaced as a gateway error
+                raise HTTPException(status_code=502, detail=f"upstream add failed: {exc}") from exc
+            return {"upstream": result}
+
+        @app.post("/v1/wrap/search", summary="Search the upstream store (passthrough)")
+        def wrap_search(req: WrapSearchRequest) -> dict[str, Any]:
+            """Straight passthrough — retrieval stays the upstream's job."""
+            try:
+                return {"upstream": governed.search(req.query, subject_id=req.subject_id)}
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(
+                    status_code=502, detail=f"upstream search failed: {exc}"
+                ) from exc
+
+        @app.post(
+            "/v1/wrap/forget/{subject_id}",
+            summary="Erase a subject upstream and here, and return the evidence",
+        )
+        def wrap_forget(
+            subject_id: str, requested_by: str = "system", dry_run: bool = False
+        ) -> dict[str, Any]:
+            """Delete the subject upstream, read them back to confirm it took,
+            crypto-shred the local copy, and return both halves.
+
+            `complete` is true only when both succeeded. `downstream_verified`
+            is `true` when the upstream was read back and was empty, `false`
+            when it still held data (or the check failed), and `null` when no
+            read-back is configured — "nobody checked" is reported as such,
+            never as a pass. A partial erasure returns **409** so a caller
+            can't mistake it for success by reading the status code alone.
+            """
+            receipt = governed.forget(subject_id, requested_by=requested_by, dry_run=dry_run)
+            cert = receipt.certificate
+            body = {
+                "complete": receipt.complete,
+                "downstream": {
+                    "called": receipt.downstream_called,
+                    "ok": receipt.downstream_ok,
+                    "verified": receipt.downstream_verified,
+                    "error": receipt.downstream_error,
+                },
+                "certificate": {
+                    "certificate_id": cert.certificate_id,
+                    "subject_id": cert.subject_id,
+                    "requested_by": cert.requested_by,
+                    "episodes_deleted": cert.episodes_deleted,
+                    "facts_deleted": cert.facts_deleted,
+                    "manifest_hash": cert.manifest_hash,
+                    "issued_at": _iso(cert.issued_at),
+                    "signature": cert.signature,
+                    "algorithm": cert.algorithm,
+                    "dry_run": cert.dry_run,
+                },
+            }
+            if not receipt.complete and not dry_run:
+                raise HTTPException(status_code=409, detail=body)
+            return body
 
     @app.get("/v1/conflicts", summary="Values that contradicted each other over time")
     def conflicts(subject_id: str | None = None) -> dict[str, Any]:

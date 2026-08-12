@@ -13,7 +13,14 @@ import importlib.util
 import pytest
 
 from attestari import Memory
-from attestari.wrap import WRAP_AGENT_ID, Adapter, WrappedMemory, mem0_adapter, wrap
+from attestari.wrap import (
+    WRAP_AGENT_ID,
+    Adapter,
+    WrappedMemory,
+    mem0_adapter,
+    wrap,
+    zep_adapter,
+)
 
 
 class FakeClient:
@@ -247,3 +254,72 @@ def test_mem0_adapter_matches_the_real_mem0_signatures() -> None:
     for cls in (Mem0Local, Mem0Hosted):
         for name, args, kwargs in calls:
             inspect.signature(getattr(cls, name)).bind(None, *args, **kwargs)
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("zep_cloud") is None,
+    reason="zep-cloud not installed — contract check only runs when it is",
+)
+def test_zep_adapter_matches_the_real_zep_signatures() -> None:
+    """Same contract check for Zep, whose API fits nothing about the
+    method-name shape: operations hang off sub-clients, `add` wants
+    `data=`/`type=`, and deletion takes a positional user_id."""
+    import inspect
+
+    from zep_cloud.graph.client import GraphClient
+    from zep_cloud.user.client import UserClient
+
+    inspect.signature(GraphClient.add).bind(None, data="text", type="text", user_id="u1")
+    inspect.signature(GraphClient.search).bind(None, query="q", user_id="u1")
+    inspect.signature(UserClient.delete).bind(None, "u1")
+    inspect.signature(UserClient.get).bind(None, "u1")
+
+
+def test_zep_adapter_drives_a_zep_shaped_client() -> None:
+    """The adapter's call shapes, exercised without needing zep installed."""
+
+    class FakeGraph:
+        def __init__(self):
+            self.added, self.searched = [], []
+
+        def add(self, *, data, type, user_id):
+            self.added.append((data, type, user_id))
+
+        def search(self, *, query, user_id):
+            self.searched.append((query, user_id))
+            return []
+
+    class FakeUsers:
+        def __init__(self):
+            self.deleted = []
+
+        def delete(self, user_id):
+            self.deleted.append(user_id)
+            return {"ok": True}
+
+        def get(self, user_id):
+            raise NotFoundError("no such user")
+
+    class FakeZep:
+        def __init__(self):
+            self.graph, self.user = FakeGraph(), FakeUsers()
+
+    client = FakeZep()
+    governed = wrap(client, ledger=Memory(), adapter=zep_adapter())
+    governed.add("I live in Delhi.", subject_id="u1")
+    governed.search("where do I live", subject_id="u1")
+    receipt = governed.forget("u1")
+
+    assert client.graph.added == [("I live in Delhi.", "text", "u1")]
+    assert client.graph.searched == [("where do I live", "u1")]
+    assert client.user.deleted == ["u1"]
+    # user.get raising NotFound is Zep's way of saying "gone" — that's a pass,
+    # not a failed check.
+    assert receipt.downstream_verified is True
+    assert receipt.complete is True
+
+
+class NotFoundError(Exception):
+    """Stands in for `zep_cloud.NotFoundError`. Deliberately named to match:
+    `_is_not_found` falls back to the class name when the real class can't be
+    imported, and this exercises that path."""

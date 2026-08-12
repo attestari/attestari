@@ -118,10 +118,60 @@ def mem0_adapter() -> Adapter:
 
 
 def zep_adapter() -> Adapter:
-    """Zep-style surface keyed on `session_id`. **Unverified** against a live
-    client — Zep's API has moved more than Mem0's, so check it against your
-    version and pass your own `Adapter` if it differs."""
-    return Adapter(add="add", search="search", delete="delete", subject_kwarg="session_id")
+    """Zep Cloud v3 (`zep_cloud.Zep`). Verified against zep-cloud 3.28.0.
+
+    Nothing about this one fits the method-name shape, which is why `Adapter`
+    takes callables: the operations live on **sub-clients** (`client.graph`,
+    `client.user`), `add` wants `data=`/`type=` rather than a positional string,
+    `search` is keyword-only, and deletion is `user.delete(user_id)` — a
+    positional argument that removes the whole user.
+
+    `verify` uses `user.get()`: after `user.delete()` the user should no longer
+    resolve, so a call that still returns one means the erasure didn't take.
+    Zep raises `NotFoundError` in that case, which `forget()` reads as "gone"
+    — see `_zep_verify`.
+    """
+    return Adapter(
+        add=lambda client, text, **kw: client.graph.add(
+            data=text, type="text", user_id=kw["user_id"]
+        ),
+        search=lambda client, query, **kw: client.graph.search(
+            query=query, user_id=kw["user_id"]
+        ),
+        delete=lambda client, **kw: client.user.delete(kw["user_id"]),
+        subject_kwarg="user_id",
+        verify=_zep_verify,
+    )
+
+
+def _zep_verify(client: Any, **kw: Any) -> Any:
+    """Has the user really gone? Zep signals absence by raising, so translate
+    that into "nothing remains" rather than letting it read as a failed check.
+    Any other error is a genuinely unverifiable delete and must propagate."""
+    try:
+        return client.user.get(kw["user_id"])
+    except Exception as exc:  # noqa: BLE001 - narrowed immediately below
+        if _is_not_found(exc):
+            return None
+        raise
+
+
+def _is_not_found(exc: BaseException) -> bool:
+    """Is this the client's "no such record" signal?
+
+    Prefer the real exception class — anyone using `zep_adapter()` necessarily
+    has zep installed — and fall back to the class name so a moved or renamed
+    import degrades to a slightly looser match instead of turning a successful
+    deletion into a reported failure.
+    """
+    try:
+        from zep_cloud import NotFoundError  # type: ignore[import-not-found]
+
+        if isinstance(exc, NotFoundError):
+            return True
+    except Exception:  # noqa: BLE001 - zep absent or restructured; use the fallback
+        pass
+    return type(exc).__name__ in {"NotFoundError", "NotFoundException"}
 
 
 @dataclass(frozen=True, slots=True)
