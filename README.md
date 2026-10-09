@@ -285,9 +285,11 @@ the certificate back once from `forget()`, so store it yourself there.
 - **Server:** run under a process manager, e.g.
   `uvicorn attestari.server:app --host 0.0.0.0 --port 8000 --workers 4` behind a
   reverse proxy; put your own auth in front (the API ships without auth).
-- **Writes for one subject:** serialise them in your app for now. Two `add()`
-  calls for the same subject at the same moment can each supersede the same old
-  value, leaving two live values for a single-valued predicate.
+- **Writes for one subject:** on 0.0.7 and earlier, serialise them in your app.
+  Two `add()` calls for the same subject at the same moment can each supersede
+  the same old value, leaving two live values for a single-valued predicate.
+  Later releases decide supersession under the store's write lock, so concurrent
+  writes are safe.
 - **Extraction & embeddings:** set `ANTHROPIC_API_KEY` (extraction auto-upgrades
   to Claude) and install `[embeddings]` for real semantic vectors.
 - **Keys:** inject `ATTESTARI_KEK` from a KMS/secrets manager as an env var — never

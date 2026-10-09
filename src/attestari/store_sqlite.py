@@ -31,6 +31,8 @@ import json
 import os
 import sqlite3
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -144,6 +146,7 @@ class SQLiteEventStore:
         self._conn = sqlite3.connect(str(p), check_same_thread=False, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
+        self._write_depth = 0  # see write_lock
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")  # a committed append survives a crash
         self._conn.execute("PRAGMA busy_timeout=5000")
@@ -214,37 +217,57 @@ class SQLiteEventStore:
 
     # --- write path ----------------------------------------------------- #
 
-    def append(self, event: Event) -> None:
+    @contextmanager
+    def write_lock(self) -> Iterator[None]:
+        """Hold the log for a block of appends: one BEGIN IMMEDIATE transaction,
+        so they commit together and no other connection (thread or process)
+        appends in between. Re-entrant: the outermost block owns the
+        transaction."""
         with self._lock:
+            if self._write_depth:
+                self._write_depth += 1
+                try:
+                    yield
+                finally:
+                    self._write_depth -= 1
+                return
             self._conn.execute("BEGIN IMMEDIATE")
+            self._write_depth = 1
             try:
-                # Seal inside the transaction so a freshly-minted DEK commits
-                # atomically with the event it protects (KeyManager.seal).
-                committed, stored = self._keys.seal(event)
-
-                row = self._conn.execute(
-                    "SELECT seq, entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
-                ).fetchone()
-                prev = row["entry_hash"] if row else GENESIS
-                # Chain extension from the shared helper (digest of the
-                # committed event); seq stamps the event row too, so events()
-                # reads back in exactly the chained order.
-                entry = next_entry(prev, (row["seq"] + 1) if row else 1, committed)
-                self._conn.execute(
-                    "INSERT INTO event (seq, kind, payload) VALUES (?, ?, ?)",
-                    (entry.seq, event.op, _encode(stored)),
-                )
-                self._conn.execute(
-                    """INSERT INTO audit_entry
-                           (seq, kind, ref, payload_hash, prev_hash, entry_hash)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (entry.seq, entry.kind, entry.ref, entry.payload_hash,
-                     entry.prev_hash, entry.entry_hash),
-                )
-                self._conn.execute("COMMIT")
+                yield
             except BaseException:
                 self._conn.execute("ROLLBACK")
                 raise
+            else:
+                self._conn.execute("COMMIT")
+            finally:
+                self._write_depth = 0
+
+    def append(self, event: Event) -> None:
+        with self.write_lock():
+            # Seal inside the transaction so a freshly-minted DEK commits
+            # atomically with the event it protects (KeyManager.seal).
+            committed, stored = self._keys.seal(event)
+
+            row = self._conn.execute(
+                "SELECT seq, entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
+            ).fetchone()
+            prev = row["entry_hash"] if row else GENESIS
+            # Chain extension from the shared helper (digest of the committed
+            # event); seq stamps the event row too, so events() reads back in
+            # exactly the chained order.
+            entry = next_entry(prev, (row["seq"] + 1) if row else 1, committed)
+            self._conn.execute(
+                "INSERT INTO event (seq, kind, payload) VALUES (?, ?, ?)",
+                (entry.seq, event.op, _encode(stored)),
+            )
+            self._conn.execute(
+                """INSERT INTO audit_entry
+                       (seq, kind, ref, payload_hash, prev_hash, entry_hash)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (entry.seq, entry.kind, entry.ref, entry.payload_hash,
+                 entry.prev_hash, entry.entry_hash),
+            )
 
     # --- read path ------------------------------------------------------ #
 

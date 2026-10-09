@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import os
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 
 from .audit import GENESIS, AuditEntry, next_entry
@@ -38,9 +40,10 @@ from .retrieve import SearchResult, weights_for
 
 _DEFAULT_DSN = "postgresql://attestari:attestari@localhost:5432/attestari"
 
-# Transaction-scoped advisory lock over the whole event log. Appends take it so
-# two writers can't fork the audit chain; projection rebuilds take it so they
-# serialise with appends and with each other, across processes.
+# Transaction-scoped advisory lock over the whole event log, taken by write_lock.
+# Appends hold it so two writers can't fork the audit chain; projection rebuilds
+# hold it so they serialise with appends and with each other, across processes;
+# Memory.add() holds it while it decides supersession and writes the result.
 _LOG_LOCK = "SELECT pg_advisory_xact_lock(hashtext('attestari.event_log'))"
 
 
@@ -101,6 +104,7 @@ class PostgresEventStore:
         # run inside ours — so every use of the connection holds this lock,
         # and the projection backend shares it.
         self._lock = threading.RLock()
+        self._write_depth = 0  # see write_lock
         self._schema_current = False  # see _require_current_schema
         # Encryption is opt-in: EnvelopeCipher when ATTESTARI_KEK is set, else NullCipher.
         self.cipher = cipher or cipher_from_env()
@@ -168,37 +172,57 @@ class PostgresEventStore:
                 "again with `python -m attestari.initdb <dsn>` (it is idempotent)"
             )
 
-    def append(self, event: Event) -> None:
-        # One transaction per append: the event row and its audit entry commit
-        # atomically (a crash cannot leave the chain out of step with the log),
-        # and an advisory xact lock serialises concurrent appenders so two
-        # writers can never read the same prev_hash and fork the chain.
+    @contextmanager
+    def write_lock(self) -> Iterator[None]:
+        """Hold the event log for a block of appends: one transaction under the
+        advisory lock, so they commit together and no other writer (thread,
+        worker or process) appends in between. Re-entrant: the outermost block
+        owns the transaction, and appends inside it join it."""
         with self._lock:
+            if self._write_depth:
+                self._write_depth += 1
+                try:
+                    yield
+                finally:
+                    self._write_depth -= 1
+                return
             self._require_current_schema()
             with self._conn.transaction():
                 self._conn.execute(_LOG_LOCK)
-                row = self._conn.execute(
-                    "SELECT seq, entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
-                ).fetchone()
-                prev = row["entry_hash"] if row else GENESIS
-                # Seal inside the transaction so a freshly minted DEK commits
-                # atomically with the event it protects (KeyManager.seal).
-                committed, stored = self._keys.seal(event)
-                # The chain extension comes from audit.next_entry — shared with
-                # the in-memory adapter, so the two chains cannot diverge. The
-                # entry's seq is also stamped onto the event row (event_seq): one
-                # global append order across episode + fact_event, which
-                # events() reads back so deep verification sees the exact
-                # chained order.
-                entry = next_entry(prev, (row["seq"] + 1) if row else 1, committed)
-                self._insert_event(stored, entry.seq)
-                self._conn.execute(
-                    """INSERT INTO audit_entry
-                           (seq, kind, ref, payload_hash, prev_hash, entry_hash)
-                       VALUES (%s, %s, %s, %s, %s, %s)""",
-                    (entry.seq, entry.kind, entry.ref, entry.payload_hash,
-                     entry.prev_hash, entry.entry_hash),
-                )
+                self._write_depth = 1
+                try:
+                    yield
+                finally:
+                    self._write_depth = 0
+
+    def append(self, event: Event) -> None:
+        # One transaction per append (or the enclosing write_lock's): the event
+        # row and its audit entry commit atomically, so a crash cannot leave the
+        # chain out of step with the log, and the advisory lock serialises
+        # appenders so two writers can never read the same prev_hash and fork
+        # the chain.
+        with self.write_lock():
+            row = self._conn.execute(
+                "SELECT seq, entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
+            ).fetchone()
+            prev = row["entry_hash"] if row else GENESIS
+            # Seal inside the transaction so a freshly minted DEK commits
+            # atomically with the event it protects (KeyManager.seal).
+            committed, stored = self._keys.seal(event)
+            # The chain extension comes from audit.next_entry — shared with the
+            # in-memory adapter, so the two chains cannot diverge. The entry's
+            # seq is also stamped onto the event row (event_seq): one global
+            # append order across episode + fact_event, which events() reads
+            # back so deep verification sees the exact chained order.
+            entry = next_entry(prev, (row["seq"] + 1) if row else 1, committed)
+            self._insert_event(stored, entry.seq)
+            self._conn.execute(
+                """INSERT INTO audit_entry
+                       (seq, kind, ref, payload_hash, prev_hash, entry_hash)
+                   VALUES (%s, %s, %s, %s, %s, %s)""",
+                (entry.seq, entry.kind, entry.ref, entry.payload_hash,
+                 entry.prev_hash, entry.entry_hash),
+            )
 
     def _insert_event(self, event: Event, event_seq: int) -> None:
         # `event` arrives sealed: PII fields already ciphertext when encrypting.
@@ -487,8 +511,9 @@ class PostgresProjectionBackend:
         # Crypto-shred: destroy the subject's DEK so all their ciphertext at rest
         # becomes unrecoverable. The subject's materialised rows are dropped by the
         # rebuild in on_write (the fold then skips the unreadable subject).
-        # Shred and certificate commit together: no destroyed key without its proof.
-        with self._lock, self._conn.transaction():
+        # Shred and certificate commit together: no destroyed key without its
+        # proof. Inside forget()'s write lock, they also commit with the tombstone.
+        with self.store.write_lock():
             self.store.shred_subject(certificate.subject_id)
             # Persist the certificate (the proof retained after the content is gone).
             self._conn.execute(
@@ -547,8 +572,7 @@ class PostgresProjectionBackend:
         through. TRUNCATE keeps its table lock until commit, so a concurrent
         search waits for the new projection rather than reading a half-built one.
         """
-        with self._lock, self._conn.transaction():
-            self._conn.execute(_LOG_LOCK)
+        with self.store.write_lock():
             proj = self._projector.build(self.store.events())
             self._conn.execute("TRUNCATE entity, edge")
             with self._conn.cursor() as cur:

@@ -8,9 +8,11 @@ with the materialised-projection backend (pgvector + full-text retrieval).
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import hashlib
 import os
+import threading
 import uuid
 from datetime import datetime, timezone
 
@@ -77,6 +79,8 @@ class Memory:
         )
         self.predicates: PredicateRegistry = predicates or default_registry()
         self.resolver: EntityResolver = resolver or LexicalEntityResolver(self.embedder)
+        # Used only when the store has no write_lock() of its own (see _write_lock).
+        self._local_write_lock = threading.RLock()
 
     @classmethod
     def local(
@@ -146,50 +150,58 @@ class Memory:
             )
         )
 
-        live_edges = self._project().live_edges()
-        latest = {(e.subject, e.predicate): (e.fact_id, e.object) for e in live_edges}
-        live_triples = {(e.subject, e.predicate, e.object) for e in live_edges}
-        seen: set[tuple[str, str, str]] = set()
-
+        # Extraction can be slow (an LLM call), so it runs before the write
+        # lock. Reading the live facts, deciding dedup and supersession, and
+        # writing the result happen under it: a concurrent add() for the same
+        # subject waits, then sees these facts, instead of both calls closing
+        # the same old value and leaving two live ones. The facts commit
+        # together, or not at all.
+        extracted = list(self.extractor.extract(text, scope))
         asserted: list[str] = []
-        for fact in self.extractor.extract(text, scope):
-            triple = (fact.subject, fact.predicate, fact.object)
-            if triple in seen or triple in live_triples:
-                continue  # dedup: this exact fact is already known (in-message or live)
-            seen.add(triple)
+        with self._write_lock():
+            live_edges = self._project().live_edges()
+            latest = {(e.subject, e.predicate): (e.fact_id, e.object) for e in live_edges}
+            live_triples = {(e.subject, e.predicate, e.object) for e in live_edges}
+            seen: set[tuple[str, str, str]] = set()
 
-            key = (fact.subject, fact.predicate)
-            single = self.predicates.is_single_valued(fact.predicate)
-            fact_id = str(uuid.uuid4())
-            if single:
-                prior = latest.get(key)
-                if prior is not None and prior[1] != fact.object:
-                    # Single-valued predicate: a different value supersedes the old.
-                    self.store.append(
-                        FactInvalidated(
-                            fact_id=prior[0],
-                            reason="superseded",
-                            valid_to=vfrom,
-                            superseded_by=fact_id,
+            for fact in extracted:
+                triple = (fact.subject, fact.predicate, fact.object)
+                if triple in seen or triple in live_triples:
+                    continue  # dedup: this exact fact is already known (in-message or live)
+                seen.add(triple)
+
+                key = (fact.subject, fact.predicate)
+                single = self.predicates.is_single_valued(fact.predicate)
+                fact_id = str(uuid.uuid4())
+                if single:
+                    prior = latest.get(key)
+                    if prior is not None and prior[1] != fact.object:
+                        # Single-valued predicate: a different value supersedes the old.
+                        self.store.append(
+                            FactInvalidated(
+                                fact_id=prior[0],
+                                reason="superseded",
+                                valid_to=vfrom,
+                                superseded_by=fact_id,
+                            )
                         )
+                # (multi-valued predicates simply coexist)
+                self.store.append(
+                    FactAsserted(
+                        fact_id=fact_id,
+                        subject=fact.subject,
+                        predicate=fact.predicate,
+                        object=fact.object,
+                        source_episode_id=episode_id,
+                        valid_from=vfrom,
+                        confidence=fact.confidence,
+                        char_span=fact.char_span,
+                        scope=scope,
                     )
-            # (multi-valued predicates simply coexist)
-            self.store.append(
-                FactAsserted(
-                    fact_id=fact_id,
-                    subject=fact.subject,
-                    predicate=fact.predicate,
-                    object=fact.object,
-                    source_episode_id=episode_id,
-                    valid_from=vfrom,
-                    confidence=fact.confidence,
-                    char_span=fact.char_span,
-                    scope=scope,
                 )
-            )
-            asserted.append(fact_id)
-            if single:
-                latest[key] = (fact_id, fact.object)
+                asserted.append(fact_id)
+                if single:
+                    latest[key] = (fact_id, fact.object)
 
         self.backend.on_write()
         return asserted
@@ -345,39 +357,43 @@ class Memory:
         the subject's records are still exactly the previewed ones; otherwise
         `ManifestChanged` is raised and nothing is destroyed, so a confirmed
         erasure covers what was reviewed, no more and no less."""
-        before = self._project()
-        episodes = [e for e in before.episodes.values() if e.scope.subject_id == subject_id]
-        facts = [e for e in before.edges.values() if e.subject_id == subject_id]
+        # Under the write lock, a concurrent add() for this subject lands either
+        # before the manifest is counted or after the tombstone, never between
+        # them. A dry run only reads, so it doesn't take the lock.
+        with contextlib.nullcontext() if dry_run else self._write_lock():
+            before = self._project()
+            episodes = [e for e in before.episodes.values() if e.scope.subject_id == subject_id]
+            facts = [e for e in before.edges.values() if e.subject_id == subject_id]
 
-        ids = sorted([e.episode_id for e in episodes] + [e.fact_id for e in facts])
-        manifest_hash = hashlib.sha256("\n".join(ids).encode()).hexdigest()
+            ids = sorted([e.episode_id for e in episodes] + [e.fact_id for e in facts])
+            manifest_hash = hashlib.sha256("\n".join(ids).encode()).hexdigest()
 
-        certificate = DeletionCertificate(
-            certificate_id=str(uuid.uuid4()),
-            subject_id=subject_id,
-            requested_by=requested_by,
-            episodes_deleted=len(episodes),
-            facts_deleted=len(facts),
-            manifest_hash=manifest_hash,
-            issued_at=utcnow(),
-            dry_run=dry_run,
-        )
-        if expected_manifest is not None and expected_manifest != manifest_hash:
-            raise ManifestChanged(dataclasses.replace(certificate, dry_run=True))
-        # A preview reports the blast radius and touches nothing — no signature
-        # (it isn't a proof), no tombstone, no key destruction.
-        if dry_run:
-            return certificate
+            certificate = DeletionCertificate(
+                certificate_id=str(uuid.uuid4()),
+                subject_id=subject_id,
+                requested_by=requested_by,
+                episodes_deleted=len(episodes),
+                facts_deleted=len(facts),
+                manifest_hash=manifest_hash,
+                issued_at=utcnow(),
+                dry_run=dry_run,
+            )
+            if expected_manifest is not None and expected_manifest != manifest_hash:
+                raise ManifestChanged(dataclasses.replace(certificate, dry_run=True))
+            # A preview reports the blast radius and touches nothing — no signature
+            # (it isn't a proof), no tombstone, no key destruction.
+            if dry_run:
+                return certificate
 
-        # Sign under the store's cipher (the KEK is the deployment's root of
-        # trust). NullCipher deployments get an unsigned certificate — honest,
-        # since logical delete has no key to anchor a signature to.
-        cipher = getattr(self.store, "cipher", None)
-        if cipher is not None:
-            certificate = sign_certificate(certificate, cipher)
+            # Sign under the store's cipher (the KEK is the deployment's root of
+            # trust). NullCipher deployments get an unsigned certificate — honest,
+            # since logical delete has no key to anchor a signature to.
+            cipher = getattr(self.store, "cipher", None)
+            if cipher is not None:
+                certificate = sign_certificate(certificate, cipher)
 
-        self.store.append(SubjectForgotten(subject_id=subject_id, requested_by=requested_by))
-        self.backend.on_forget(certificate)
+            self.store.append(SubjectForgotten(subject_id=subject_id, requested_by=requested_by))
+            self.backend.on_forget(certificate)
         self.backend.on_write()
         return certificate
 
@@ -414,6 +430,13 @@ class Memory:
         return verify_entries(self.store.audit_entries())
 
     # --- internals ------------------------------------------------------ #
+
+    def _write_lock(self):
+        """The store's write lock: appends inside it commit together, and no
+        other writer appends in between. A store without one gets a lock that
+        only covers this engine's threads."""
+        lock = getattr(self.store, "write_lock", None)
+        return lock() if callable(lock) else self._local_write_lock
 
     def _project(self):
         return self.backend.project()

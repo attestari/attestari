@@ -174,7 +174,12 @@ verify the history wasn't altered after a subject's content has been destroyed.
 - **Predicate cardinality** ([predicates.py](src/attestari/predicates.py)) —
   predicates are single-valued (`lives_in`, `works_at` — a new value supersedes
   the old) or multi-valued (`uses_tool` — values coexist). `conflicts()` surfaces
-  resolved conflicts rather than hiding them.
+  resolved conflicts rather than hiding them. `add()` reads the live value,
+  decides, and writes the result under the store's write lock (an advisory lock
+  on Postgres, `BEGIN IMMEDIATE` on SQLite, a lock in memory). Concurrent writes
+  for one subject therefore take turns, and the later one supersedes the earlier
+  one's value. Extraction runs before the lock, so a slow LLM call doesn't hold
+  it.
 - **Entity resolution** ([resolver.py](src/attestari/resolver.py)) — a
   candidate → score → merge pipeline with auto-merge and human-review bands;
   every merge is reversible via `EntityUnmerged`. Reads don't consult merges yet:
