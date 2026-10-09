@@ -160,15 +160,20 @@ class Memory:
 
             key = (fact.subject, fact.predicate)
             single = self.predicates.is_single_valued(fact.predicate)
+            fact_id = str(uuid.uuid4())
             if single:
                 prior = latest.get(key)
                 if prior is not None and prior[1] != fact.object:
                     # Single-valued predicate: a different value supersedes the old.
                     self.store.append(
-                        FactInvalidated(fact_id=prior[0], reason="superseded", valid_to=vfrom)
+                        FactInvalidated(
+                            fact_id=prior[0],
+                            reason="superseded",
+                            valid_to=vfrom,
+                            superseded_by=fact_id,
+                        )
                     )
             # (multi-valued predicates simply coexist)
-            fact_id = str(uuid.uuid4())
             self.store.append(
                 FactAsserted(
                     fact_id=fact_id,

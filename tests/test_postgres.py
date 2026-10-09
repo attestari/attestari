@@ -50,6 +50,8 @@ def test_postgres_bitemporal_and_persistence() -> None:
     assert mem.answer("where does the user live", subject_id="u1") == "Berlin"
     assert mem.answer("where did the user live", subject_id="u1", as_of="2020-01-01") == "Delhi"
     assert mem.answer("where does the user work", subject_id="u1") == "Globex"
+    # Supersessions carry superseded_by; it round-trips through the UUID column.
+    assert mem.verify_audit(deep=True).ok
 
     # Durability: a brand-new engine (fresh connection) reads the materialised
     # projection and the durable log for provenance.

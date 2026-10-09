@@ -50,6 +50,12 @@ def test_supersession_keeps_history() -> None:
     assert not delhi.alive and delhi.valid_to is not None  # superseded, window closed
     assert berlin.alive and berlin.valid_to is None         # current, still open
 
+    # The invalidation names the fact that replaced it.
+    from attestari.events import FactInvalidated
+
+    closed = next(e for e in mem.store.events() if isinstance(e, FactInvalidated))
+    assert closed.fact_id == delhi.fact_id and closed.superseded_by == berlin.fact_id
+
 
 def test_provenance_traces_to_source() -> None:
     mem = _seed()
