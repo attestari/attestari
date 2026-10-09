@@ -14,15 +14,28 @@ zero-dependency path is byte-for-byte unchanged.
 
 from __future__ import annotations
 
-import dataclasses
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from .audit import GENESIS, AuditEntry, next_entry
 from .crypto import EnvelopeCipher, InMemoryKeyring, KeyManager, NullCipher, cipher_from_env
 from .events import EpisodeIngested, Event, FactAsserted, SubjectForgotten
+
+
+@dataclass(frozen=True)
+class LogPosition:
+    """A point in the log: an audit entry's seq and hash. The hash commits to
+    every entry before it, so a position still on the chain identifies exactly
+    which events came before it."""
+
+    seq: int
+    entry_hash: str
+
+
+LOG_START = LogPosition(0, GENESIS)
 
 
 class ForgottenSubjectError(Exception):
@@ -59,7 +72,14 @@ class EventStore(Protocol):
 
     They also refuse an episode or fact for a subject with a `SubjectForgotten`
     tombstone, raising `ForgottenSubjectError`. They check under that lock, so a
-    write racing a `forget()` lands before the erasure or is refused after it."""
+    write racing a `forget()` lands before the erasure or is refused after it.
+
+    And they provide `changes_since(position)`: the events appended after a
+    `LogPosition`, read the way `events()` reads them, plus the new head. It
+    returns None when the position is no longer on the chain (a rolled-back
+    write, a truncate), and the reader starts again from `LOG_START`. A
+    projection backend uses it to fold only what is new; a store without it
+    gets a full fold on every read."""
 
     def append(self, event: Event) -> None: ...
 
@@ -180,29 +200,22 @@ class InMemoryEventStore:
 
     def events(self) -> list[Event]:
         with self._lock:
-            # A copy, so callers can't mutate the log out from under us.
-            log = list(self._log)
-            deks = self._keys.live_deks() if self.cipher.enabled else {}
-        if not self.cipher.enabled:
-            return log
+            return self._keys.open(self._log)
 
-        out: list[Event] = []
-        readable_episodes: set[str] = set()
-        for ev in log:
-            if isinstance(ev, EpisodeIngested) and ev.scope.subject_id:
-                sid = ev.scope.subject_id
-                if sid not in deks:
-                    continue  # DEK destroyed -> subject erased: episode is unreadable
-                readable_episodes.add(ev.episode_id)
-                out.append(dataclasses.replace(ev, payload=self.cipher.decrypt(deks[sid], ev.payload)))
-            elif isinstance(ev, FactAsserted) and ev.scope.subject_id:
-                sid = ev.scope.subject_id
-                if sid not in deks:
-                    continue  # source subject erased -> the fact is erased too
-                out.append(dataclasses.replace(ev, object=self.cipher.decrypt(deks[sid], ev.object)))
+    def changes_since(self, position: LogPosition) -> tuple[LogPosition, list[Event]] | None:
+        with self._lock:
+            n = len(self._audit)
+            if position.seq == 0:
+                on_chain = position.entry_hash == GENESIS
             else:
-                out.append(ev)
-        return out
+                on_chain = (
+                    position.seq <= n
+                    and self._audit[position.seq - 1].entry_hash == position.entry_hash
+                )
+            if not on_chain:
+                return None
+            head = LogPosition(n, self._audit[-1].entry_hash) if n else LOG_START
+            return head, self._keys.open(self._log[position.seq :])
 
     def audit_entries(self) -> list[AuditEntry]:
         with self._lock:

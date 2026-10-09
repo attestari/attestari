@@ -183,7 +183,8 @@ plugs in the Postgres parts. *Concept: a facade — one simple interface over ma
 pieces.*
 
 **`backend.py` — how reads happen.** The `ProjectionBackend` port +
-`InMemoryProjectionBackend` (fold the log on every read). This is the seam that
+`InMemoryProjectionBackend` (keep the projection, and fold in only what's new
+on each read). This is the seam that
 lets the *same* `Memory` either run in memory or on Postgres. *Concept: ports.*
 
 **`records.py` — plain return values.** `DeletionCertificate` (proof of erasure)

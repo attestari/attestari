@@ -34,10 +34,11 @@ from .events import (
     Scope,
     SubjectForgotten,
 )
+from .backend import ProjectionCache
 from .projection import Edge, Entity, Projection, Projector
 from .records import DeletionCertificate
 from .retrieve import SearchResult, weights_for
-from .store import ForgottenSubjectError, content_subject
+from .store import LOG_START, ForgottenSubjectError, LogPosition, content_subject
 
 _DEFAULT_DSN = "postgresql://attestari:attestari@localhost:5432/attestari"
 
@@ -165,12 +166,22 @@ class PostgresEventStore:
                 ).fetchone()["ok"]
         return self._schema_current
 
-    def _head(self) -> tuple[int, str]:
-        """(seq, entry_hash) of the last audit entry, or (0, GENESIS) when empty."""
+    def _head(self) -> LogPosition:
+        """The last audit entry, or LOG_START when the log is empty."""
         row = self._conn.execute(
             "SELECT seq, entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
         ).fetchone()
-        return (row["seq"], row["entry_hash"]) if row else (0, GENESIS)
+        return LogPosition(row["seq"], row["entry_hash"]) if row else LOG_START
+
+    def _on_chain(self, position: LogPosition) -> bool:
+        # The entry hash commits to every entry before it, so a match means
+        # `position` names exactly this log's first `seq` events.
+        if position.seq == 0:
+            return position.entry_hash == GENESIS
+        row = self._conn.execute(
+            "SELECT entry_hash FROM audit_entry WHERE seq = %s", (position.seq,)
+        ).fetchone()
+        return row is not None and row["entry_hash"] == position.entry_hash
 
     def _require_current_schema(self) -> None:
         # Writes need the current schema; reads tolerate an older one, so an
@@ -230,7 +241,7 @@ class PostgresEventStore:
             sid = content_subject(event)
             if sid is not None and self._is_forgotten(sid):
                 raise ForgottenSubjectError(sid)
-            prev_seq, prev = self._head()
+            head = self._head()
             # Seal inside the transaction so a freshly minted DEK commits
             # atomically with the event it protects (KeyManager.seal).
             committed, stored = self._keys.seal(event)
@@ -239,7 +250,7 @@ class PostgresEventStore:
             # seq is also stamped onto the event row (event_seq): one global
             # append order across episode + fact_event, which events() reads
             # back so deep verification sees the exact chained order.
-            entry = next_entry(prev, prev_seq + 1, committed)
+            entry = next_entry(head.entry_hash, head.seq + 1, committed)
             self._insert_event(stored, entry.seq)
             self._conn.execute(
                 """INSERT INTO audit_entry
@@ -342,32 +353,60 @@ class PostgresEventStore:
     # --- read path ------------------------------------------------------ #
 
     def events(self) -> list[Event]:
+        return self._snapshot(self._read_events)
+
+    def changes_since(self, position: LogPosition) -> tuple[LogPosition, list[Event]] | None:
+        def read() -> tuple[LogPosition, list[Event]] | None:
+            if not self._on_chain(position):
+                return None
+            return self._head(), self._read_events(after_seq=position.seq)
+
+        return self._snapshot(read)
+
+    def _snapshot(self, read):
         from psycopg import pq
 
         with self._lock:
             if self._conn.info.transaction_status != pq.TransactionStatus.IDLE:
-                # Called inside a transaction (a rebuild holding the log lock):
+                # Called inside a transaction (a write holding the log lock):
                 # no append can land between the reads.
-                return self._read_events()
+                return read()
             # Otherwise read every table from one snapshot. An append that
-            # commits between the episode and fact reads would yield a fact
-            # whose source episode was never read, and with it the fact's scope.
+            # commits between the reads would yield a fact whose source episode
+            # was never read, or events past the head this read reports.
             with self._conn.transaction():
                 self._conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
-                return self._read_events()
+                return read()
 
-    def _read_events(self) -> list[Event]:
-        # Reconstruct in the exact append order the audit chain committed:
-        # event_seq (= the audit entry's seq) is a total order across the
-        # episode and fact_event tables, so deep verification aligns 1:1.
+    def _read_events(self, after_seq: int = 0) -> list[Event]:
+        """Events in the exact append order the audit chain committed, from
+        after `after_seq`. event_seq (= the audit entry's seq) is a total order
+        across the episode and fact_event tables, so deep verification aligns
+        1:1. A full read (`after_seq=0`) also takes rows from before event_seq
+        existed, which have none."""
         ordered: list[tuple[int, Event]] = []
-        scope_by_episode: dict[str, Scope] = {}
         encrypted = self.cipher.enabled
-        deks = self._keys.live_deks()  # {} when encryption is disabled
+        since, params = ("", None) if after_seq == 0 else ("WHERE {}event_seq > %s", (after_seq,))
 
         episodes = self._conn.execute(
-            "SELECT * FROM episode ORDER BY event_seq"
+            f"SELECT * FROM episode {since.format('')} ORDER BY event_seq", params
         ).fetchall()
+        # A fact's scope is its source episode's, which a read from after_seq
+        # may not include, so it comes with the fact.
+        facts = self._conn.execute(
+            f"""SELECT f.*, e.episode_id IS NOT NULL AS has_episode,
+                       e.subject_id AS ep_subject_id, e.agent_id AS ep_agent_id,
+                       e.session_id AS ep_session_id, e.org_id AS ep_org_id
+                  FROM fact_event f LEFT JOIN episode e ON e.episode_id = f.source_episode
+                  {since.format('f.')}
+                 ORDER BY f.event_seq, f.seq""",
+            params,
+        ).fetchall()
+        deks = self._keys.deks_for(  # {} when encryption is disabled
+            {r["subject_id"] for r in episodes if r["subject_id"]}
+            | {r["ep_subject_id"] for r in facts if r["ep_subject_id"]}
+        )
+
         for row in episodes:
             subject_id = row["subject_id"]
             payload = row["payload"] or ""
@@ -382,7 +421,6 @@ class PostgresEventStore:
                 session_id=row["session_id"],
                 org_id=row["org_id"],
             )
-            scope_by_episode[eid] = scope
             ordered.append(
                 (
                     row["event_seq"] or 0,
@@ -397,19 +435,29 @@ class PostgresEventStore:
                 )
             )
 
-        facts = self._conn.execute("SELECT * FROM fact_event ORDER BY event_seq, seq").fetchall()
         for row in facts:
             op = row["op"]
             eseq = row["event_seq"] or 0
             if op == "asserted":
                 src = str(row["source_episode"]) if row["source_episode"] else ""
+                scope = (
+                    Scope(
+                        subject_id=row["ep_subject_id"],
+                        agent_id=row["ep_agent_id"],
+                        session_id=row["ep_session_id"],
+                        org_id=row["ep_org_id"],
+                    )
+                    if row["has_episode"]
+                    else Scope()
+                )
                 obj = row["object"]
                 if encrypted:
-                    if src not in scope_by_episode:
-                        continue  # source episode erased -> the fact is erased too
-                    sid = scope_by_episode[src].subject_id
-                    if sid in deks:
-                        obj = self.cipher.decrypt(deks[sid], obj)
+                    if not row["has_episode"]:
+                        continue  # no source episode to read the fact under
+                    if scope.subject_id:
+                        if scope.subject_id not in deks:
+                            continue  # source episode erased -> the fact is erased too
+                        obj = self.cipher.decrypt(deks[scope.subject_id], obj)
                 ordered.append(
                     (
                         eseq,
@@ -423,7 +471,7 @@ class PostgresEventStore:
                             valid_to=row["valid_to"],
                             confidence=row["confidence"],
                             char_span=_span(row["char_span_lo"], row["char_span_hi"]),
-                            scope=scope_by_episode.get(src, Scope()),
+                            scope=scope,
                             recorded_at=row["recorded_at"],
                             # .get: read-only use still works on an unmigrated schema
                             object_hash=row.get("object_hash"),
@@ -502,8 +550,8 @@ class PostgresProjectionBackend:
     Keeps the `entity`/`edge` projection tables in step with the durable event
     log and serves hybrid retrieval in SQL: pgvector cosine similarity +
     Postgres full-text ranking + a bi-temporal `as_of` filter. This is what
-    lights up the HNSW index in src/attestari/db/schema.sql. `project()` still
-    folds the log for timeline/supersession (the log is the source of truth);
+    lights up the HNSW index in src/attestari/db/schema.sql. `project()` serves
+    timeline/supersession from the in-process projection (see ProjectionCache);
     only `search()` reads the materialised tables.
 
     A write updates only the rows its events touched, in the write's own
@@ -516,6 +564,7 @@ class PostgresProjectionBackend:
         self.store = store
         self.embedder = embedder
         self._projector = Projector(embedder)
+        self._cache = ProjectionCache(store, self._projector)
         self._conn = store._conn
         self._lock = store._lock  # same connection, so the same lock
         self._dim = getattr(embedder, "dim", 384)
@@ -539,7 +588,7 @@ class PostgresProjectionBackend:
                 self._sync()
 
     def project(self) -> Projection:
-        return self._projector.build(self.store.events())
+        return self._cache.current()
 
     def on_write(self) -> None:
         # Memory calls this inside its write lock, so the update commits with
@@ -622,26 +671,17 @@ class PostgresProjectionBackend:
         events after `projection_state`, or everything when that position is
         missing or no longer on the chain."""
         head = self.store._head()
-        state = self._conn.execute(
+        row = self._conn.execute(
             "SELECT last_seq, last_hash FROM projection_state"
         ).fetchone()
-        if state is not None and (state["last_seq"], state["last_hash"]) == head:
+        state = LogPosition(row["last_seq"], row["last_hash"]) if row else None
+        if state == head:
             return
-        if state is None or not self._on_chain(state["last_seq"], state["last_hash"]):
+        if state is None or not self.store._on_chain(state):
             self._rebuild_tables()
             return
-        self._apply_since(state["last_seq"])
+        self._apply_since(state.seq)
         self._set_state(head)
-
-    def _on_chain(self, seq: int, entry_hash: str) -> bool:
-        # The entry hash commits to every entry before it, so a match means the
-        # tables were built from exactly this log's first `seq` events.
-        if seq == 0:
-            return entry_hash == GENESIS
-        row = self._conn.execute(
-            "SELECT entry_hash FROM audit_entry WHERE seq = %s", (seq,)
-        ).fetchone()
-        return row is not None and row["entry_hash"] == entry_hash
 
     def _apply_since(self, seq: int) -> None:
         # Which rows the new events can change. Episodes change none; a fact's
@@ -669,8 +709,8 @@ class PostgresProjectionBackend:
                 forgotten.add(r["subject"])
                 entities.add(r["subject"])
 
-        # The rows take their values from the fold, the same as a rebuild.
-        proj = self._projector.build(self.store.events())
+        # The rows take their values from the projection, as in a rebuild.
+        proj = self._cache.current()
         if forgotten:
             self._conn.execute(
                 "DELETE FROM edge WHERE subject_id = ANY(%s)", (sorted(forgotten),)
@@ -729,13 +769,13 @@ class PostgresProjectionBackend:
                 ],
             )
 
-    def _set_state(self, head: tuple[int, str]) -> None:
+    def _set_state(self, head: LogPosition) -> None:
         self._conn.execute(
             """INSERT INTO projection_state (singleton, last_seq, last_hash)
                VALUES (TRUE, %s, %s)
                ON CONFLICT (singleton)
                DO UPDATE SET last_seq = EXCLUDED.last_seq, last_hash = EXCLUDED.last_hash""",
-            head,
+            (head.seq, head.entry_hash),
         )
 
     def search(

@@ -273,32 +273,24 @@ class Memory:
 
     def get_provenance(self, fact_id: str) -> Provenance | None:
         """Where did this fact come from? Source episode, span, and the exact
-        snippet of raw text it was extracted from."""
-        asserted = next(
-            (e for e in self.store.events() if isinstance(e, FactAsserted) and e.fact_id == fact_id),
-            None,
-        )
-        if asserted is None:
+        snippet of raw text it was extracted from. None for an unknown fact, or
+        one whose subject has been forgotten."""
+        proj = self._project()
+        edge = proj.edges.get(fact_id)
+        if edge is None:
             return None
-        episode = next(
-            (
-                e
-                for e in self.store.events()
-                if isinstance(e, EpisodeIngested) and e.episode_id == asserted.source_episode_id
-            ),
-            None,
-        )
+        episode = proj.episodes.get(edge.source_episode_id)
         snippet = None
         source_ref = None
         if episode is not None:
             source_ref = episode.source_ref
-            if asserted.char_span is not None:
-                lo, hi = asserted.char_span
+            if edge.char_span is not None:
+                lo, hi = edge.char_span
                 snippet = episode.payload[lo:hi]
         return Provenance(
             fact_id=fact_id,
-            source_episode_id=asserted.source_episode_id,
-            recorded_at=asserted.recorded_at,
+            source_episode_id=edge.source_episode_id,
+            recorded_at=edge.tx_from,
             snippet=snippet,
             source_ref=source_ref,
         )

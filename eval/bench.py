@@ -56,9 +56,6 @@ def main() -> int:
     ap.add_argument("--target-ms", type=float, default=200.0)
     args = ap.parse_args()
 
-    if args.engine == "postgres":
-        args.subjects = min(args.subjects, 60)  # each add() still reads the whole log
-
     mem = _build(args.engine, args.subjects)
 
     latencies: list[float] = []

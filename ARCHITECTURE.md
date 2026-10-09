@@ -129,9 +129,10 @@ between tiers.
 The read/query side sits behind a **`ProjectionBackend`** port
 ([backend.py](src/attestari/backend.py)) with two implementations:
 
-- **`InMemoryProjectionBackend`** — folds the event log on every read (used by
-  the in-memory and SQLite tiers). Zero dependencies and fully deterministic;
-  this is the reference behaviour the other backend is checked against.
+- **`InMemoryProjectionBackend`** — keeps the projection in the process and
+  folds in what each read finds new (used by the in-memory and SQLite tiers).
+  Zero dependencies and fully deterministic; this is the reference behaviour the
+  other backend is checked against.
 - **`PostgresProjectionBackend`** ([store_postgres.py](src/attestari/store_postgres.py))
   — a durable **`PostgresEventStore`** plus **materialised** `entity`/`edge`
   projection tables (rebuildable from the log), with **hybrid retrieval evaluated
@@ -140,6 +141,19 @@ The read/query side sits behind a **`ProjectionBackend`** port
   A write updates only the rows its events touched, in the same transaction as
   the events. `projection_state` records the audit entry the tables reflect; if
   that row is missing or its hash isn't on the chain, the tables are rebuilt.
+
+Both keep their current projection in a `ProjectionCache`. A read asks the store
+for the events appended after the cached log position (`changes_since`), and the
+store checks that position against the audit chain: its entry hash commits to
+every entry before it, so a match proves the cache was built from exactly the
+current log's first events. A rolled-back write or a truncate fails the check,
+and the cache folds the log again from the start. So each process folds the
+whole log once, on its first read, and after that only what other writers (and
+its own) have appended. A projection never changes once returned; folding in new
+events makes a new one. One consequence: a change made to the database outside
+Attestari, such as a key deleted without `forget()` or a row edited in place,
+reaches a process that has already cached those events only when it next folds
+from the start. The deep audit reports both.
 
 `Memory.postgres()` wires the durable store and backend together. The whole thing
 runs on **one Postgres + pgvector container — no graph database required.**
@@ -229,11 +243,13 @@ ports without rearchitecting:
 - **Blob externalisation** — keep raw payloads in content-addressed object storage
   (S3), and only the `content_hash` + small fact events in the hot DB. The schema
   already records `content_hash`.
-- **Snapshots** — persist the projection "as of event N" and replay only events
-  after it, so reads stay O(recent) rather than O(history).
-- **Incremental projection** — the Postgres `entity`/`edge` tables already
-  update per write. Next is folding only new events into each process's
-  projection, so reads and writes stop re-reading the whole log.
+- **Snapshots** — persist the projection "as of event N", so a new process
+  replays only the events after it instead of folding the whole log on its first
+  read. A snapshot holds decrypted content, so it would need encrypting under
+  the subjects' keys to keep crypto-shred whole.
+- **Incremental projection** — done: the Postgres `entity`/`edge` tables update
+  per write, and each process folds only the events appended since its last
+  read.
 - **Partitioning / tiering** — split the log by subject/org/time; keep recent
   events on SSD and archive old ones to cheap storage.
 - **Crypto-shred** already shrinks forgotten subjects to metadata only.

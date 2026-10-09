@@ -199,15 +199,57 @@ class KeyManager:
             wrapped = self.cipher.wrap(dek)
             self.keyring.put(subject_id, wrapped)
             self._unwrapped[wrapped] = dek
-        elif wrapped not in self._unwrapped:
-            self._unwrapped[wrapped] = self.cipher.unwrap(wrapped)
-        return self._unwrapped[wrapped]
+        return self._unwrap(wrapped)
+
+    def _unwrap(self, wrapped: bytes) -> bytes:
+        dek = self._unwrapped.get(wrapped)
+        if dek is None:
+            dek = self._unwrapped[wrapped] = self.cipher.unwrap(wrapped)
+        return dek
 
     def live_deks(self) -> dict[str, bytes]:
         """All subjects whose DEK is intact (used to decrypt on read)."""
         if not self.cipher.enabled:
             return {}
-        return {sid: self.cipher.unwrap(w) for sid, w in self.keyring.all().items()}
+        return {sid: self._unwrap(w) for sid, w in self.keyring.all().items()}
+
+    def deks_for(self, subject_ids: set[str]) -> dict[str, bytes]:
+        """The intact DEKs of these subjects, for reading. Never mints one."""
+        if not self.cipher.enabled or not subject_ids:
+            return {}
+        if len(subject_ids) > 32:  # one query beats one per subject
+            wrapped = {s: w for s, w in self.keyring.all().items() if s in subject_ids}
+        else:
+            wrapped = {s: w for s in subject_ids if (w := self.keyring.get(s)) is not None}
+        return {s: self._unwrap(w) for s, w in wrapped.items()}
+
+    def open(self, events: list[Event]) -> list[Event]:
+        """`events` as a reader sees them: episode payloads and fact objects
+        decrypted, and those whose subject's key is gone (erased) left out."""
+        if not self.cipher.enabled:
+            return list(events)
+        deks = self.deks_for(
+            {
+                ev.scope.subject_id
+                for ev in events
+                if isinstance(ev, (EpisodeIngested, FactAsserted)) and ev.scope.subject_id
+            }
+        )
+        out: list[Event] = []
+        for ev in events:
+            if isinstance(ev, EpisodeIngested) and ev.scope.subject_id:
+                dek = deks.get(ev.scope.subject_id)
+                if dek is None:
+                    continue  # DEK destroyed -> subject erased: episode is unreadable
+                out.append(dataclasses.replace(ev, payload=self.cipher.decrypt(dek, ev.payload)))
+            elif isinstance(ev, FactAsserted) and ev.scope.subject_id:
+                dek = deks.get(ev.scope.subject_id)
+                if dek is None:
+                    continue  # source subject erased -> the fact is erased too
+                out.append(dataclasses.replace(ev, object=self.cipher.decrypt(dek, ev.object)))
+            else:
+                out.append(ev)
+        return out
 
     def shred(self, subject_id: str) -> None:
         """Destroy the subject's DEK — their ciphertext becomes unrecoverable."""

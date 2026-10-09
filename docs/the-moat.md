@@ -118,6 +118,14 @@ required. Two stores are the exceptions, and both get the same treatment:
 This is a property of every crypto-shred system that also has to be searchable,
 not an Attestari quirk — we'd rather you read it here than discover it in an audit.
 
+One more boundary concerns running processes rather than storage. Each process
+keeps its current projection, decrypted, in memory between requests. The process
+that runs `forget()` drops the subject from it at once; any other worker drops
+them on its next read, before it answers anything. So no read returns erased
+content after the forget commits, but an idle worker can hold it in memory until
+it next reads or restarts. Crypto-shred's guarantee covers storage and backups,
+not the memory of a live process.
+
 Crypto-shred requires encryption enabled — pass an `EnvelopeCipher` (as the
 demo does) or set `ATTESTARI_KEK`; this works with **either** the in-memory or
 the Postgres store, so the demo proves it end-to-end with no database. With no

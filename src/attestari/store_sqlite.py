@@ -48,7 +48,7 @@ from .events import (
     Scope,
     SubjectForgotten,
 )
-from .store import ForgottenSubjectError, content_subject
+from .store import LOG_START, ForgottenSubjectError, LogPosition, content_subject
 
 DEFAULT_PATH = "~/.attestari/attestari.db"
 
@@ -267,14 +267,11 @@ class SQLiteEventStore:
             # atomically with the event it protects (KeyManager.seal).
             committed, stored = self._keys.seal(event)
 
-            row = self._conn.execute(
-                "SELECT seq, entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
-            ).fetchone()
-            prev = row["entry_hash"] if row else GENESIS
+            head = self._head()
             # Chain extension from the shared helper (digest of the committed
             # event); seq stamps the event row too, so events() reads back in
             # exactly the chained order.
-            entry = next_entry(prev, (row["seq"] + 1) if row else 1, committed)
+            entry = next_entry(head.entry_hash, head.seq + 1, committed)
             self._conn.execute(
                 "INSERT INTO event (seq, kind, payload) VALUES (?, ?, ?)",
                 (entry.seq, event.op, _encode(stored)),
@@ -299,30 +296,39 @@ class SQLiteEventStore:
         return [_decode(r["kind"], r["payload"]) for r in rows]
 
     def events(self) -> list[Event]:
-        raw = self._raw_events()
-        if not self.cipher.enabled:
-            return raw
+        return self._keys.open(self._raw_events())
 
-        deks = self._keys.live_deks()
-        out: list[Event] = []
-        for ev in raw:
-            if isinstance(ev, EpisodeIngested) and ev.scope.subject_id:
-                sid = ev.scope.subject_id
-                if sid not in deks:
-                    continue  # DEK destroyed -> subject erased: episode is unreadable
-                out.append(
-                    dataclasses.replace(ev, payload=self.cipher.decrypt(deks[sid], ev.payload))
-                )
-            elif isinstance(ev, FactAsserted) and ev.scope.subject_id:
-                sid = ev.scope.subject_id
-                if sid not in deks:
-                    continue  # source subject erased -> the fact is erased too
-                out.append(
-                    dataclasses.replace(ev, object=self.cipher.decrypt(deks[sid], ev.object))
-                )
-            else:
-                out.append(ev)
-        return out
+    def changes_since(self, position: LogPosition) -> tuple[LogPosition, list[Event]] | None:
+        with self._lock:
+            # One read transaction (unless a write's is open), so the chain
+            # check, the head and the events come from one snapshot.
+            own = not self._conn.in_transaction
+            if own:
+                self._conn.execute("BEGIN")
+            try:
+                if position.seq == 0:
+                    on_chain = position.entry_hash == GENESIS
+                else:
+                    row = self._conn.execute(
+                        "SELECT entry_hash FROM audit_entry WHERE seq = ?", (position.seq,)
+                    ).fetchone()
+                    on_chain = row is not None and row["entry_hash"] == position.entry_hash
+                if not on_chain:
+                    return None
+                head = self._head()
+                rows = self._conn.execute(
+                    "SELECT kind, payload FROM event WHERE seq > ? ORDER BY seq", (position.seq,)
+                ).fetchall()
+                return head, self._keys.open([_decode(r["kind"], r["payload"]) for r in rows])
+            finally:
+                if own:
+                    self._conn.execute("COMMIT")
+
+    def _head(self) -> LogPosition:
+        row = self._conn.execute(
+            "SELECT seq, entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
+        ).fetchone()
+        return LogPosition(row["seq"], row["entry_hash"]) if row else LOG_START
 
     def audit_entries(self) -> list[AuditEntry]:
         with self._lock:
