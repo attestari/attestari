@@ -2,12 +2,19 @@
 
 This is the CQRS read model: throw it away and rebuild it from the log at any
 time. It materialises the bi-temporal knowledge graph (entities + edges), applies
-corrections (supersession), resolves merged entities, and enacts deletion. A
-`forget` is honoured here simply by rebuilding without the subject's lineage.
+corrections (supersession), resolves merged entities, and enacts deletion: a
+`forget` drops the subject's whole lineage, and anything recorded for them after.
+
+The fold is incremental. `Projector.apply` folds new events into an existing
+projection and returns a new one, and folding a log in pieces gives exactly the
+projection that folding it whole does, so a reader only has to fold what was
+appended since it last looked.
 """
 
 from __future__ import annotations
 
+import dataclasses
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -23,9 +30,12 @@ from .events import (
 )
 
 
-@dataclass
+@dataclass(frozen=True)
 class Edge:
-    """A materialised fact: a temporal knowledge-graph edge with provenance."""
+    """A materialised fact: a temporal knowledge-graph edge with provenance.
+
+    Frozen: a projection shares its edges with every caller it hands them to,
+    so an edge is replaced when its fact changes, never edited."""
 
     fact_id: str
     subject: str
@@ -109,68 +119,97 @@ class Projector:
             vec = self._embed_cache[text] = self.embedder.embed(text)
         return vec
 
-    def build(self, events: list[Event]) -> Projection:
-        episodes: dict[str, EpisodeIngested] = {}
-        edges: dict[str, Edge] = {}
-        entities: dict[str, Entity] = {}
-        alias_of: dict[str, str] = {}
-        forgotten: set[str] = set()
+    def empty(self) -> Projection:
+        return Projection(episodes={}, edges={}, entities={}, alias_of={}, forgotten=set())
+
+    def build(self, events: Iterable[Event]) -> Projection:
+        return self.apply(self.empty(), events)
+
+    def apply(self, base: Projection, events: Iterable[Event]) -> Projection:
+        """`base` with `events` folded in, as a new projection.
+
+        `base` is left as it was: its dicts are copied once per call, and an
+        edge or entity that changes is replaced rather than edited, so a
+        projection never changes after it is returned. Folding a log in pieces
+        gives the same projection as folding it whole."""
+        events = list(events)
+        if not events:
+            return base
+        episodes = dict(base.episodes)
+        edges = dict(base.edges)
+        entities = dict(base.entities)
+        alias_of = dict(base.alias_of)
+        forgotten = set(base.forgotten)
 
         for ev in events:
             if isinstance(ev, EpisodeIngested):
-                episodes[ev.episode_id] = ev
+                if ev.scope.subject_id not in forgotten:
+                    episodes[ev.episode_id] = ev
 
             elif isinstance(ev, FactAsserted):
-                edges[ev.fact_id] = Edge(
-                    fact_id=ev.fact_id,
-                    subject=ev.subject,
-                    predicate=ev.predicate,
-                    object=ev.object,
-                    valid_from=ev.valid_from,
-                    valid_to=ev.valid_to,
-                    tx_from=ev.recorded_at,
-                    tx_to=None,
-                    confidence=ev.confidence,
-                    source_episode_id=ev.source_episode_id,
-                    char_span=ev.char_span,
-                    subject_id=ev.scope.subject_id,
-                    alive=ev.valid_to is None,
-                    embedding=self._embedding(f"{ev.subject} {ev.predicate} {ev.object}"),
-                )
-                entities.setdefault(ev.subject, Entity(canonical_id=ev.subject))
+                if ev.scope.subject_id not in forgotten:
+                    edges[ev.fact_id] = Edge(
+                        fact_id=ev.fact_id,
+                        subject=ev.subject,
+                        predicate=ev.predicate,
+                        object=ev.object,
+                        valid_from=ev.valid_from,
+                        valid_to=ev.valid_to,
+                        tx_from=ev.recorded_at,
+                        tx_to=None,
+                        confidence=ev.confidence,
+                        source_episode_id=ev.source_episode_id,
+                        char_span=ev.char_span,
+                        subject_id=ev.scope.subject_id,
+                        alive=ev.valid_to is None,
+                        embedding=self._embedding(f"{ev.subject} {ev.predicate} {ev.object}"),
+                    )
+                if ev.subject not in forgotten:
+                    entities.setdefault(ev.subject, Entity(canonical_id=ev.subject))
 
             elif isinstance(ev, FactInvalidated):
                 edge = edges.get(ev.fact_id)
                 if edge is not None:
-                    edge.valid_to = ev.valid_to
-                    edge.tx_to = ev.recorded_at  # close the system-time record
-                    edge.alive = False
+                    edges[ev.fact_id] = dataclasses.replace(
+                        edge,
+                        valid_to=ev.valid_to,
+                        tx_to=ev.recorded_at,  # close the system-time record
+                        alive=False,
+                    )
 
             elif isinstance(ev, EntityMerged):
                 alias_of[ev.alias_id] = ev.canonical_id
-                canon = entities.setdefault(ev.canonical_id, Entity(canonical_id=ev.canonical_id))
-                canon.aliases.add(ev.alias_id)
+                if ev.canonical_id not in forgotten:
+                    canon = entities.get(ev.canonical_id)
+                    entities[ev.canonical_id] = Entity(
+                        canonical_id=ev.canonical_id,
+                        aliases=(canon.aliases if canon else set()) | {ev.alias_id},
+                    )
 
             elif isinstance(ev, EntityUnmerged):
                 if alias_of.get(ev.alias_id) == ev.canonical_id:
                     del alias_of[ev.alias_id]
                 canon = entities.get(ev.canonical_id)
                 if canon is not None:
-                    canon.aliases.discard(ev.alias_id)
+                    entities[ev.canonical_id] = Entity(
+                        canonical_id=ev.canonical_id, aliases=canon.aliases - {ev.alias_id}
+                    )
 
             elif isinstance(ev, SubjectForgotten):
-                forgotten.add(ev.subject_id)
-
-        # Enact deletion: drop the forgotten subjects' entire lineage. Because
-        # the projection is rebuilt from the log, this genuinely removes them —
-        # there is nothing left to retrieve. (Production additionally destroys
-        # the per-subject encryption key so backups are covered.)
-        if forgotten:
-            episodes = {
-                eid: ep for eid, ep in episodes.items() if ep.scope.subject_id not in forgotten
-            }
-            edges = {fid: e for fid, e in edges.items() if e.subject_id not in forgotten}
-            entities = {cid: ent for cid, ent in entities.items() if cid not in forgotten}
+                # Enact deletion: drop the subject's entire lineage now, and
+                # skip anything recorded for them later (above). There is
+                # nothing left to retrieve. (Production additionally destroys
+                # the per-subject encryption key so backups are covered.)
+                sid = ev.subject_id
+                forgotten.add(sid)
+                episodes = {
+                    eid: ep for eid, ep in episodes.items() if ep.scope.subject_id != sid
+                }
+                dropped = [e for e in edges.values() if e.subject_id == sid]
+                if dropped:
+                    edges = {fid: e for fid, e in edges.items() if e.subject_id != sid}
+                    self._forget_texts(dropped, edges)
+                entities.pop(sid, None)
 
         return Projection(
             episodes=episodes,
@@ -179,3 +218,12 @@ class Projector:
             alias_of=alias_of,
             forgotten=forgotten,
         )
+
+    def _forget_texts(self, dropped: list[Edge], remaining: dict[str, Edge]) -> None:
+        # The memo is keyed by fact text, so it would keep a forgotten subject's
+        # facts in this process for as long as it runs. Drop them, unless a fact
+        # that remains has the same text.
+        texts = {e.text() for e in dropped}
+        texts -= {e.text() for e in remaining.values()}
+        for text in texts:
+            self._embed_cache.pop(text, None)
