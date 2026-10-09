@@ -79,10 +79,11 @@ A control you misunderstand is worse than one you don't have.
   software can decide for you** — ask the engineering team which one is in place.
 
 - **Search indexes hold readable text.** To make memory searchable, derived
-  tables (`edge`, `entity`) hold fact text in the clear. They are rebuilt on
-  every erasure so the live system is clean, but a backup taken beforehand would
-  contain them. These tables are fully rebuildable from the log, so the policy is
-  to exclude them from backups entirely. Same bucket as the keyring.
+  tables (`edge`, `entity`) hold fact text in the clear. An erasure deletes the
+  subject's rows in the same transaction, so the live system is clean, but a
+  backup taken beforehand would contain them. These tables are fully rebuildable
+  from the log, so the policy is to exclude them from backups entirely. Same
+  bucket as the keyring.
 
 - **Without encryption configured, erasure is logical, not cryptographic.** If
   no root key (`ATTESTARI_KEK`) is set, `forget()` drops the content from all

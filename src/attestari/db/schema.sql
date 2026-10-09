@@ -161,3 +161,13 @@ CREATE INDEX IF NOT EXISTS edge_alive_idx   ON edge (alive);
 CREATE INDEX IF NOT EXISTS edge_embedding_idx ON edge USING hnsw (embedding vector_cosine_ops);
 -- Keyword search over the fact text:
 CREATE INDEX IF NOT EXISTS edge_text_trgm_idx ON edge USING gin ((subject || ' ' || predicate || ' ' || object) gin_trgm_ops);
+
+-- The log position the entity and edge tables reflect: the audit entry they were
+-- last brought up to. A write applies only the events after it, in the write's
+-- own transaction. A missing row, or one whose hash no longer matches the chain,
+-- means a full rebuild. Derived, like the tables above.
+CREATE TABLE IF NOT EXISTS projection_state (
+    singleton  BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    last_seq   BIGINT  NOT NULL,
+    last_hash  TEXT    NOT NULL
+);

@@ -57,7 +57,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.engine == "postgres":
-        args.subjects = min(args.subjects, 60)  # rebuild-on-write is O(n) per add
+        args.subjects = min(args.subjects, 60)  # each add() still reads the whole log
 
     mem = _build(args.engine, args.subjects)
 

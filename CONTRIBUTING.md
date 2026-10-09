@@ -41,8 +41,6 @@ contributions add a new adapter without touching the core. Examples:
 - **OpenAI / LlamaIndex integrations** — like `clients/langchain`.
 - **True BM25** — swap Postgres `ts_rank` for `pg_search`/ParadeDB in `store_postgres`.
 - **Expose more on the MCP tools** — `session_id`, `as_of` on `search_memory`.
-- **Incremental projection** — update `entity`/`edge` per event instead of the
-  current rebuild-on-write (the big perf win).
 
 ## Pull requests
 

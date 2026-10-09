@@ -84,8 +84,9 @@ destruction.
 
 **2. The projection tables.** Retrieval needs plaintext — you cannot full-text
 search ciphertext — so the derived `edge` and `entity` tables hold fact text and
-embeddings in the clear. They are dropped and rebuilt on every `forget()`, so
-the live database is clean, but a backup taken beforehand would contain them.
+embeddings in the clear. `forget()` deletes the subject's rows from them in the
+same transaction, so the live database is clean, but a backup taken beforehand
+would contain them.
 They are fully rebuildable from the log, so exclude them from backups entirely.
 
 **3. Encryption must actually be on.** With no KEK configured, `forget()` is a

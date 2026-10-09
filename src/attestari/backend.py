@@ -36,7 +36,8 @@ class ProjectionBackend(Protocol):
     ) -> list[SearchResult]: ...
 
     def on_write(self) -> None:
-        """Called after events are appended (refresh materialised state)."""
+        """Called after events are appended, still inside the store's write
+        lock, so materialised state can commit with the events it reflects."""
         ...
 
     def on_forget(self, certificate: DeletionCertificate) -> None:

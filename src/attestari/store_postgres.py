@@ -34,7 +34,7 @@ from .events import (
     Scope,
     SubjectForgotten,
 )
-from .projection import Edge, Projection, Projector
+from .projection import Edge, Entity, Projection, Projector
 from .records import DeletionCertificate
 from .retrieve import SearchResult, weights_for
 from .store import ForgottenSubjectError, content_subject
@@ -42,7 +42,7 @@ from .store import ForgottenSubjectError, content_subject
 _DEFAULT_DSN = "postgresql://attestari:attestari@localhost:5432/attestari"
 
 # Transaction-scoped advisory lock over the whole event log, taken by write_lock.
-# Appends hold it so two writers can't fork the audit chain; projection rebuilds
+# Appends hold it so two writers can't fork the audit chain; projection updates
 # hold it so they serialise with appends and with each other, across processes;
 # Memory.add() holds it while it decides supersession and writes the result.
 _LOG_LOCK = "SELECT pg_advisory_xact_lock(hashtext('attestari.event_log'))"
@@ -151,23 +151,34 @@ class PostgresEventStore:
 
     # --- write path ----------------------------------------------------- #
 
+    def _schema_is_current(self) -> bool:
+        if not self._schema_current:
+            with self._lock:
+                self._schema_current = self._conn.execute(
+                    """SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                                      WHERE table_schema = current_schema()
+                                        AND table_name = 'fact_event'
+                                        AND column_name = 'object_hash')
+                          AND EXISTS (SELECT 1 FROM information_schema.tables
+                                      WHERE table_schema = current_schema()
+                                        AND table_name = 'projection_state') AS ok"""
+                ).fetchone()["ok"]
+        return self._schema_current
+
+    def _head(self) -> tuple[int, str]:
+        """(seq, entry_hash) of the last audit entry, or (0, GENESIS) when empty."""
+        row = self._conn.execute(
+            "SELECT seq, entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
+        ).fetchone()
+        return (row["seq"], row["entry_hash"]) if row else (0, GENESIS)
+
     def _require_current_schema(self) -> None:
         # Writes need the current schema; reads tolerate an older one, so an
         # auditor can verify a log they can't migrate. Checked before anything
         # is written, so an unmigrated database fails cleanly rather than
         # midway through an add(); re-checked until found, so a migration
         # applied while the process runs is picked up.
-        if self._schema_current:
-            return
-        self._schema_current = (
-            self._conn.execute(
-                """SELECT 1 FROM information_schema.columns
-                   WHERE table_schema = current_schema()
-                     AND table_name = 'fact_event' AND column_name = 'object_hash'"""
-            ).fetchone()
-            is not None
-        )
-        if not self._schema_current:
+        if not self._schema_is_current():
             raise RuntimeError(
                 "the Postgres schema is older than this version of attestari; apply it "
                 "again with `python -m attestari.initdb <dsn>` (it is idempotent)"
@@ -219,10 +230,7 @@ class PostgresEventStore:
             sid = content_subject(event)
             if sid is not None and self._is_forgotten(sid):
                 raise ForgottenSubjectError(sid)
-            row = self._conn.execute(
-                "SELECT seq, entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
-            ).fetchone()
-            prev = row["entry_hash"] if row else GENESIS
+            prev_seq, prev = self._head()
             # Seal inside the transaction so a freshly minted DEK commits
             # atomically with the event it protects (KeyManager.seal).
             committed, stored = self._keys.seal(event)
@@ -231,7 +239,7 @@ class PostgresEventStore:
             # seq is also stamped onto the event row (event_seq): one global
             # append order across episode + fact_event, which events() reads
             # back so deep verification sees the exact chained order.
-            entry = next_entry(prev, (row["seq"] + 1) if row else 1, committed)
+            entry = next_entry(prev, prev_seq + 1, committed)
             self._insert_event(stored, entry.seq)
             self._conn.execute(
                 """INSERT INTO audit_entry
@@ -478,7 +486,8 @@ class PostgresEventStore:
         """Wipe all events and projections (test/dev helper)."""
         with self._lock:
             self._conn.execute(
-                "TRUNCATE episode, fact_event, entity, edge, deletion_certificate, keyring, audit_entry CASCADE"
+                "TRUNCATE episode, fact_event, entity, edge, projection_state, "
+                "deletion_certificate, keyring, audit_entry CASCADE"
             )
             self._keys.reset_cache()
 
@@ -490,15 +499,17 @@ class PostgresEventStore:
 class PostgresProjectionBackend:
     """Materialised-projection backend.
 
-    Rebuilds the `entity`/`edge` projection tables from the durable event log and
-    serves hybrid retrieval in SQL: pgvector cosine similarity + Postgres
-    full-text ranking + a bi-temporal `as_of` filter. This is what lights up the
-    HNSW index in src/attestari/db/schema.sql. `project()` still folds the log for
-    timeline/supersession (the log is the source of truth); only `search()` reads
-    the materialised table.
+    Keeps the `entity`/`edge` projection tables in step with the durable event
+    log and serves hybrid retrieval in SQL: pgvector cosine similarity +
+    Postgres full-text ranking + a bi-temporal `as_of` filter. This is what
+    lights up the HNSW index in src/attestari/db/schema.sql. `project()` still
+    folds the log for timeline/supersession (the log is the source of truth);
+    only `search()` reads the materialised tables.
 
-    Rebuild-on-write is O(n) and fine for now; incremental projection is a
-    later optimisation.
+    A write updates only the rows its events touched, in the write's own
+    transaction, so the tables and the log commit together. `projection_state`
+    records the audit entry the tables reflect; when that row is missing or no
+    longer on the chain, the tables are rebuilt from the log.
     """
 
     def __init__(self, store: PostgresEventStore, embedder: Embedder) -> None:
@@ -508,21 +519,33 @@ class PostgresProjectionBackend:
         self._conn = store._conn
         self._lock = store._lock  # same connection, so the same lock
         self._dim = getattr(embedder, "dim", 384)
-        self._maybe_initial_rebuild()
+        self._sync_on_attach()
 
-    def _maybe_initial_rebuild(self) -> None:
-        # If we attach to a log that hasn't been materialised yet, build it once.
-        with self._lock:
-            edge_n = self._conn.execute("SELECT count(*) AS n FROM edge").fetchone()["n"]
-            fe_n = self._conn.execute("SELECT count(*) AS n FROM fact_event").fetchone()["n"]
-        if edge_n == 0 and fe_n > 0:
-            self.rebuild()
+    def _sync_on_attach(self) -> None:
+        # Bring the tables up to the log once. On an older schema, reads keep
+        # working from the tables as they are, and writes ask for initdb.
+        if not self.store._schema_is_current():
+            return
+        with self.store.write_lock():
+            emptied = self._conn.execute(
+                """SELECT NOT EXISTS (SELECT 1 FROM edge)
+                      AND EXISTS (SELECT 1 FROM fact_event WHERE op = 'asserted') AS emptied"""
+            ).fetchone()["emptied"]
+            if emptied:
+                # Tables emptied behind the state row, e.g. restored from a
+                # backup that left the derived tables out.
+                self._rebuild_tables()
+            else:
+                self._sync()
 
     def project(self) -> Projection:
         return self._projector.build(self.store.events())
 
     def on_write(self) -> None:
-        self.rebuild()
+        # Memory calls this inside its write lock, so the update commits with
+        # the events it reflects.
+        with self.store.write_lock():
+            self._sync()
 
     def on_forget(self, certificate: DeletionCertificate) -> None:
         # Crypto-shred: destroy the subject's DEK so all their ciphertext at rest
@@ -581,39 +604,139 @@ class PostgresProjectionBackend:
         ]
 
     def rebuild(self) -> None:
-        """Materialise entity + edge tables from the event log (rebuildable).
+        """Materialise entity + edge tables from the whole event log.
 
-        One transaction under the event-log lock: rebuilds (one per write, from
-        every process) serialise with appends and with each other instead of
-        colliding on primary keys, and each folds a log no append is midway
-        through. TRUNCATE keeps its table lock until commit, so a concurrent
-        search waits for the new projection rather than reading a half-built one.
+        Writes keep the tables current on their own (see on_write); this is the
+        fallback, and the way to start over. One transaction under the
+        event-log lock, so it serialises with appends and with other writers.
+        TRUNCATE keeps its table lock until commit, so a concurrent search waits
+        for the new projection rather than reading a half-built one.
         """
         with self.store.write_lock():
-            proj = self._projector.build(self.store.events())
-            self._conn.execute("TRUNCATE entity, edge")
-            with self._conn.cursor() as cur:
-                cur.executemany(
-                    "INSERT INTO entity (canonical_id, aliases) VALUES (%s, %s)",
-                    [(ent.canonical_id, list(ent.aliases)) for ent in proj.entities.values()],
-                )
-                cur.executemany(
-                    """INSERT INTO edge
-                           (fact_id, subject, predicate, object, valid_from, valid_to,
-                            tx_from, tx_to, confidence, source_episode, char_span_lo, char_span_hi,
-                            subject_id, alive, embedding)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::vector)""",
-                    [
-                        (
-                            e.fact_id, e.subject, e.predicate, e.object, e.valid_from, e.valid_to,
-                            e.tx_from, e.tx_to, e.confidence, e.source_episode_id or None,
-                            e.char_span[0] if e.char_span else None,
-                            e.char_span[1] if e.char_span else None,
-                            e.subject_id, e.alive, _vec_literal(e.embedding),
-                        )
-                        for e in proj.edges.values()
-                    ],
-                )
+            self._rebuild_tables()
+
+    # --- keeping the tables in step with the log (under the write lock) --- #
+
+    def _sync(self) -> None:
+        """Bring the tables up to the head of the log: only the rows touched by
+        events after `projection_state`, or everything when that position is
+        missing or no longer on the chain."""
+        head = self.store._head()
+        state = self._conn.execute(
+            "SELECT last_seq, last_hash FROM projection_state"
+        ).fetchone()
+        if state is not None and (state["last_seq"], state["last_hash"]) == head:
+            return
+        if state is None or not self._on_chain(state["last_seq"], state["last_hash"]):
+            self._rebuild_tables()
+            return
+        self._apply_since(state["last_seq"])
+        self._set_state(head)
+
+    def _on_chain(self, seq: int, entry_hash: str) -> bool:
+        # The entry hash commits to every entry before it, so a match means the
+        # tables were built from exactly this log's first `seq` events.
+        if seq == 0:
+            return entry_hash == GENESIS
+        row = self._conn.execute(
+            "SELECT entry_hash FROM audit_entry WHERE seq = %s", (seq,)
+        ).fetchone()
+        return row is not None and row["entry_hash"] == entry_hash
+
+    def _apply_since(self, seq: int) -> None:
+        # Which rows the new events can change. Episodes change none; a fact's
+        # assertion or invalidation changes its edge; an assertion, merge or
+        # unmerge changes an entity; a forget drops the subject's edges and the
+        # entity named after them.
+        rows = self._conn.execute(
+            """SELECT op, fact_id::text AS fact_id, subject, canonical_id
+                 FROM fact_event WHERE event_seq > %s""",
+            (seq,),
+        ).fetchall()
+        if not rows:
+            return
+        facts: set[str] = set()
+        entities: set[str] = set()
+        forgotten: set[str] = set()
+        for r in rows:
+            if r["op"] in ("asserted", "invalidated"):
+                facts.add(r["fact_id"])
+            if r["op"] == "asserted":
+                entities.add(r["subject"])
+            elif r["op"] in ("entity_merged", "entity_unmerged"):
+                entities.add(r["canonical_id"])
+            elif r["op"] == "subject_forgotten":
+                forgotten.add(r["subject"])
+                entities.add(r["subject"])
+
+        # The rows take their values from the fold, the same as a rebuild.
+        proj = self._projector.build(self.store.events())
+        if forgotten:
+            self._conn.execute(
+                "DELETE FROM edge WHERE subject_id = ANY(%s)", (sorted(forgotten),)
+            )
+        gone = sorted(f for f in facts if f not in proj.edges)
+        if gone:
+            self._conn.execute("DELETE FROM edge WHERE fact_id = ANY(%s::uuid[])", (gone,))
+        self._write_edges([proj.edges[f] for f in sorted(facts) if f in proj.edges])
+        gone = sorted(c for c in entities if c not in proj.entities)
+        if gone:
+            self._conn.execute("DELETE FROM entity WHERE canonical_id = ANY(%s)", (gone,))
+        self._write_entities([proj.entities[c] for c in sorted(entities) if c in proj.entities])
+
+    def _rebuild_tables(self) -> None:
+        proj = self._projector.build(self.store.events())
+        self._conn.execute("TRUNCATE entity, edge")
+        self._write_entities(list(proj.entities.values()))
+        self._write_edges(list(proj.edges.values()))
+        self._set_state(self.store._head())
+
+    def _write_entities(self, entities: list[Entity]) -> None:
+        with self._conn.cursor() as cur:
+            cur.executemany(
+                """INSERT INTO entity (canonical_id, aliases) VALUES (%s, %s)
+                   ON CONFLICT (canonical_id) DO UPDATE SET aliases = EXCLUDED.aliases""",
+                [(ent.canonical_id, sorted(ent.aliases)) for ent in entities],
+            )
+
+    def _write_edges(self, edges: list[Edge]) -> None:
+        with self._conn.cursor() as cur:
+            cur.executemany(
+                """INSERT INTO edge
+                       (fact_id, subject, predicate, object, valid_from, valid_to,
+                        tx_from, tx_to, confidence, source_episode, char_span_lo, char_span_hi,
+                        subject_id, alive, embedding)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::vector)
+                   ON CONFLICT (fact_id) DO UPDATE SET
+                       subject = EXCLUDED.subject, predicate = EXCLUDED.predicate,
+                       object = EXCLUDED.object, valid_from = EXCLUDED.valid_from,
+                       valid_to = EXCLUDED.valid_to, tx_from = EXCLUDED.tx_from,
+                       tx_to = EXCLUDED.tx_to, confidence = EXCLUDED.confidence,
+                       source_episode = EXCLUDED.source_episode,
+                       char_span_lo = EXCLUDED.char_span_lo,
+                       char_span_hi = EXCLUDED.char_span_hi,
+                       subject_id = EXCLUDED.subject_id, alive = EXCLUDED.alive,
+                       embedding = EXCLUDED.embedding""",
+                [
+                    (
+                        e.fact_id, e.subject, e.predicate, e.object, e.valid_from, e.valid_to,
+                        e.tx_from, e.tx_to, e.confidence, e.source_episode_id or None,
+                        e.char_span[0] if e.char_span else None,
+                        e.char_span[1] if e.char_span else None,
+                        e.subject_id, e.alive, _vec_literal(e.embedding),
+                    )
+                    for e in edges
+                ],
+            )
+
+    def _set_state(self, head: tuple[int, str]) -> None:
+        self._conn.execute(
+            """INSERT INTO projection_state (singleton, last_seq, last_hash)
+               VALUES (TRUE, %s, %s)
+               ON CONFLICT (singleton)
+               DO UPDATE SET last_seq = EXCLUDED.last_seq, last_hash = EXCLUDED.last_hash""",
+            head,
+        )
 
     def search(
         self,

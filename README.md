@@ -283,8 +283,10 @@ the certificate back once from `forget()`, so store it yourself there.
 
 **Deploying for real.** A production checklist:
 - **Storage:** use `Memory.postgres()` (concurrent access); apply the schema with
-  `python -m attestari.initdb "$ATTESTARI_DATABASE_URL"`. `Memory.local()` (SQLite) is
-  single-process — great for one agent or an MCP server, not a shared service.
+  `python -m attestari.initdb "$ATTESTARI_DATABASE_URL"`, and run it again after
+  every upgrade (it's idempotent; until then, writes stop with that instruction
+  and reads keep working). `Memory.local()` (SQLite) is single-process — great
+  for one agent or an MCP server, not a shared service.
 - **Server:** run under a process manager, e.g.
   `uvicorn attestari.server:app --host 0.0.0.0 --port 8000 --workers 4` behind a
   reverse proxy; put your own auth in front (the API ships without auth).
@@ -306,7 +308,8 @@ the certificate back once from `forget()`, so store it yourself there.
   resurrect a shredded subject — see [docs/the-moat.md](docs/the-moat.md).
 - **Backups:** exclude the derived projection tables (`edge`, `entity`) as well —
   they hold plaintext fact text for retrieval and are fully rebuildable from the
-  (ciphertext) event log, so backing them up only weakens the shred.
+  (ciphertext) event log, so backing them up only weakens the shred. After a
+  restore without them, the first connection rebuilds them.
 - **Secrets:** nothing is read from a `.env` file automatically — export the vars
   (or use your orchestrator's secret injection) before starting the process.
 

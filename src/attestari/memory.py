@@ -207,21 +207,23 @@ class Memory:
                 asserted.append(fact_id)
                 if single:
                     latest[key] = (fact_id, fact.object)
-
-        self.backend.on_write()
+            # Inside the lock: a materialised projection commits with the facts.
+            self.backend.on_write()
         return asserted
 
     def merge_entities(self, canonical_id: str, alias_id: str, evidence: str = "manual") -> None:
         """Record that two surface forms are the same entity (entity resolution)."""
-        self.store.append(
-            EntityMerged(canonical_id=canonical_id, alias_id=alias_id, evidence=evidence)
-        )
-        self.backend.on_write()
+        with self._write_lock():
+            self.store.append(
+                EntityMerged(canonical_id=canonical_id, alias_id=alias_id, evidence=evidence)
+            )
+            self.backend.on_write()
 
     def unmerge_entities(self, canonical_id: str, alias_id: str) -> None:
         """Reverse a merge — split an alias back out (entity resolution is undoable)."""
-        self.store.append(EntityUnmerged(canonical_id=canonical_id, alias_id=alias_id))
-        self.backend.on_write()
+        with self._write_lock():
+            self.store.append(EntityUnmerged(canonical_id=canonical_id, alias_id=alias_id))
+            self.backend.on_write()
 
     def resolve_entities(
         self, names: list[str] | None = None, *, auto: bool = True
@@ -399,7 +401,7 @@ class Memory:
 
             self.store.append(SubjectForgotten(subject_id=subject_id, requested_by=requested_by))
             self.backend.on_forget(certificate)
-        self.backend.on_write()
+            self.backend.on_write()
         return certificate
 
     # --- audit ---------------------------------------------------------- #

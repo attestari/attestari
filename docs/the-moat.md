@@ -107,9 +107,9 @@ required. Two stores are the exceptions, and both get the same treatment:
   destruction**.
 - **The projection tables** (`edge`, `entity` on the Postgres tier). Retrieval
   needs plaintext — you can't full-text-search ciphertext — so the *derived*
-  read model holds fact text (and its embeddings) in the clear. It is dropped
-  and rebuilt on every `forget()`, so the live database is clean; but a backup
-  taken before the shred contains those plaintext rows. Projections are
+  read model holds fact text (and its embeddings) in the clear. `forget()`
+  deletes the subject's rows in the same transaction, so the live database is
+  clean; but a backup taken before the shred contains those plaintext rows. Projections are
   **rebuildable state** — `rebuild()` regenerates them from the event log — so
   the policy is simple: **exclude `edge` and `entity` from backups** entirely
   (there is nothing in them a restore needs), which puts them in the same

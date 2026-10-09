@@ -137,6 +137,9 @@ The read/query side sits behind a **`ProjectionBackend`** port
   projection tables (rebuildable from the log), with **hybrid retrieval evaluated
   in SQL**: pgvector cosine + Postgres full-text + the bi-temporal `as_of` filter.
   This lights up the HNSW index defined in [src/attestari/db/schema.sql](src/attestari/db/schema.sql).
+  A write updates only the rows its events touched, in the same transaction as
+  the events. `projection_state` records the audit entry the tables reflect; if
+  that row is missing or its hash isn't on the chain, the tables are rebuilt.
 
 `Memory.postgres()` wires the durable store and backend together. The whole thing
 runs on **one Postgres + pgvector container — no graph database required.**
@@ -228,8 +231,9 @@ ports without rearchitecting:
   already records `content_hash`.
 - **Snapshots** — persist the projection "as of event N" and replay only events
   after it, so reads stay O(recent) rather than O(history).
-- **Incremental projection** — update the materialised `entity`/`edge` tables per
-  event instead of rebuilding, behind the same `ProjectionBackend` port.
+- **Incremental projection** — the Postgres `entity`/`edge` tables already
+  update per write. Next is folding only new events into each process's
+  projection, so reads and writes stop re-reading the whole log.
 - **Partitioning / tiering** — split the log by subject/org/time; keep recent
   events on SSD and archive old ones to cheap storage.
 - **Crypto-shred** already shrinks forgotten subjects to metadata only.
