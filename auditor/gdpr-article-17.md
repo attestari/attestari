@@ -106,6 +106,19 @@ data your application holds elsewhere, model weights that may have been trained
 on the data, or copies exported to other systems. Memory is one component of a
 data map, and Art. 17 applies to all of it.
 
+Erasure follows scope, not mentions. It covers the episodes recorded under that
+`subject_id` and the facts extracted from them. A fact about the person that was
+extracted from someone else's message (a colleague mentioning them, say) lives
+in that other subject's scope and is not erased. If your users' memories refer
+to one another, find those mentions as part of handling the request.
+
+Encryption covers message text and fact values. Each event's other fields stay
+readable after an erasure: the `subject_id`, a fact's subject and predicate
+(with Claude extraction the subject can be a person's name), scope ids,
+timestamps, character spans (which reveal a value's length) and `source_ref`.
+Use opaque, pseudonymous `subject_id`s, and keep personal data out of
+`source_ref`.
+
 ## Previewing before you erase
 
 Erasure is one-way. `forget(dry_run=True)` computes and returns the certificate

@@ -9,7 +9,7 @@ user's data can be **provably deleted** with a signed certificate.
 
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![python](https://img.shields.io/badge/python-3.11%2B-blue)
-![tests](https://img.shields.io/badge/tests-122%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-138%20passing-brightgreen)
 ![deps](https://img.shields.io/badge/core-zero%20dependencies-brightgreen)
 
 ```python
@@ -60,7 +60,7 @@ dealbreaker. Attestari is the neutral, self-hostable layer that fixes exactly th
 |---|---|---|
 | Runs on plain Postgres (no graph DB) | ✅ | ✗ (needs Neo4j / a vector service) |
 | Provenance on every fact | ✅ | partial |
-| Bi-temporal ("what did it know on date D?") | ✅ | ✗ |
+| Bi-temporal ("what was true on date D?") | ✅ | ✗ |
 | **Provable deletion + certificate (GDPR)** | ✅ | ✗ |
 | **Tamper-evident audit trail (hash chain)** | ✅ | ✗ |
 | Works across model vendors | ✅ | usually locked to one |
@@ -77,6 +77,8 @@ catches any edit, insert, or delete — and the proof survives deletion.
   message, with a character span, confidence, and timestamps.
 - **Bi-temporal time travel** — query memory `as_of` any past instant; corrections
   supersede old facts without erasing them, so history is always reconstructable.
+  `as_of` filters on valid time (when a fact was true). System time (when
+  Attestari recorded it) is stored on every fact, but there's no query on it yet.
 - **Provable deletion** — `forget(subject_id)` crypto-shreds a user's data and
   returns a signed `DeletionCertificate`; content backups and replicas are
   covered (key storage needs its own backup policy — see
@@ -86,8 +88,10 @@ catches any edit, insert, or delete — and the proof survives deletion.
 - **Conflict resolution** — single- vs multi-valued predicates; conflicts are
   surfaced via `conflicts()`, not silently dropped.
 - **Entity resolution** — merge "the same entity, many surface forms," reversibly.
-- **Hybrid retrieval** — semantic (pgvector) ⊕ keyword (full-text) ⊕ graph, with
-  the bi-temporal filter built in.
+  Merges are recorded, but reads don't follow them yet: `search()` and
+  `timeline()` still see each surface form separately.
+- **Hybrid retrieval** — semantic (pgvector) ⊕ keyword (full-text), with the
+  bi-temporal filter built in.
 - **Runs anywhere** — zero-dependency in-memory engine, or durable on one Postgres
   + pgvector container. No graph database. Works across model vendors.
 
@@ -263,6 +267,17 @@ is issued unsigned. **Keep the KEK out of the database and its backups** (env
 var or a KMS) — storing it next to the data defeats the shred. See the backup
 boundary in [docs/the-moat.md](docs/the-moat.md).
 
+What `forget()` covers, and what it leaves: it erases the episodes recorded under
+that `subject_id` and the facts extracted from them. A fact about the person that
+was extracted from someone else's message lives in that other subject's scope and
+survives. Encryption covers message text and fact values only; each event's
+other fields stay readable after an erasure — `subject_id`, a fact's subject and
+predicate (with Claude extraction the subject can be a person's name), scope ids,
+timestamps, character spans (which reveal a value's length) and `source_ref`. So
+use opaque, pseudonymous `subject_id`s and keep personal data out of `source_ref`.
+Postgres keeps a register of certificates; `Memory()` and `Memory.local()` hand
+the certificate back once from `forget()`, so store it yourself there.
+
 **Deploying for real.** A production checklist:
 - **Storage:** use `Memory.postgres()` (concurrent access); apply the schema with
   `python -m attestari.initdb "$ATTESTARI_DATABASE_URL"`. `Memory.local()` (SQLite) is
@@ -270,6 +285,9 @@ boundary in [docs/the-moat.md](docs/the-moat.md).
 - **Server:** run under a process manager, e.g.
   `uvicorn attestari.server:app --host 0.0.0.0 --port 8000 --workers 4` behind a
   reverse proxy; put your own auth in front (the API ships without auth).
+- **Writes for one subject:** serialise them in your app for now. Two `add()`
+  calls for the same subject at the same moment can each supersede the same old
+  value, leaving two live values for a single-valued predicate.
 - **Extraction & embeddings:** set `ANTHROPIC_API_KEY` (extraction auto-upgrades
   to Claude) and install `[embeddings]` for real semantic vectors.
 - **Keys:** inject `ATTESTARI_KEK` from a KMS/secrets manager as an env var — never

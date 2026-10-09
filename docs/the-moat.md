@@ -148,7 +148,9 @@ opens, and both remain in the timeline. `search(..., as_of=D)` filters to what w
 valid at instant D.
 
 **Honest boundary.** Time-travel answers reflect what was *recorded*; it is not a
-prediction of unrecorded past state. Extraction quality bounds what facts exist to
+prediction of unrecorded past state. `as_of` slices valid time only: "what did the
+system believe at time T?" (a query over `recorded_at`) isn't exposed yet, though
+system time is stored on every fact. Extraction quality bounds what facts exist to
 travel over (see the LOCOMO retrieval eval for that signal).
 
 ---
@@ -159,7 +161,7 @@ travel over (see the LOCOMO retrieval eval for that signal).
 |---|---|---|
 | Provable deletion + certificate (GDPR Art. 17) | ✅ crypto-shred | ✗ (auto-expiry ≠ proof) |
 | Tamper-evident audit (edit/insert/delete caught) | ✅ hash chain + content check | ✗ |
-| Bi-temporal "what did it know on date D?" | ✅ | partial (Zep temporal graph) |
+| Bi-temporal "what was true on date D?" | ✅ | partial (Zep temporal graph) |
 | Runs on plain Postgres, no graph DB, vendor-neutral | ✅ | ✗ |
 
 The retrieval-accuracy race (LOCOMO/LongMemEval) is crowded and well-funded.

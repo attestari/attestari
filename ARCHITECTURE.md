@@ -16,8 +16,9 @@ being bolted on:
 
 - **Audit & provenance** — the log already records who said what, when, and from
   which source episode. There's nothing extra to maintain.
-- **Time travel** — every fact carries valid-time *and* system-time, so "what did
-  the agent believe on date D?" is just a filtered fold of the log.
+- **Time travel** — every fact carries valid-time *and* system-time, so "what was
+  true on date D?" is just a filtered fold of the log (`as_of`). "What did the agent
+  believe on date D?" would be the same fold over system time; it isn't exposed yet.
 - **Provable deletion** — "forget subject X" is itself an event; rebuilding the
   projections without X's lineage genuinely removes it, and a signed certificate
   is emitted as proof. The raw payload is encrypted per-subject and the key is
@@ -48,7 +49,7 @@ being bolted on:
    └───────────────┬───────────────┘
                    ▼
    ┌───────────────────────────────┐
-   │ retrieve.py  hybrid retrieval  │   semantic ⊕ keyword ⊕ graph, + "as-of" filter
+   │ retrieve.py  hybrid retrieval  │   semantic ⊕ keyword, + "as-of" filter
    └───────────────┬───────────────┘
                    ▼
    memory.py  Memory facade:
@@ -92,7 +93,8 @@ A correction ("actually they moved in March") is a **new** assertion plus an
 invalidation of the old one. The old fact is never edited or deleted — only its
 `valid_to` is closed — so the full history is reconstructable. Querying `as_of` a
 past instant restricts to the facts whose valid-time interval contains it; the
-default is "now."
+default is "now." There is no query over system time (`tx_from`/`tx_to`) yet; it
+only breaks ties.
 
 ## Retrieval
 
@@ -100,8 +102,9 @@ Hybrid, with time built in ([retrieve.py](src/attestari/retrieve.py)):
 
 1. **semantic** — cosine similarity over fact embeddings (pgvector HNSW on Postgres);
 2. **keyword** — lexical token overlap (Postgres full-text ranking on the durable path);
-3. **graph** — neighbours of matched entities;
-4. **temporal filter** — restrict to facts valid at the requested `as_of` instant.
+3. **temporal filter** — restrict to facts valid at the requested `as_of` instant.
+
+Graph expansion (pulling in neighbours of matched entities) is not implemented yet.
 
 The channel weights follow the embedder: with the zero-dependency hash embedder
 retrieval stays keyword-led; a real embedding model (declared via the port's
@@ -174,7 +177,8 @@ verify the history wasn't altered after a subject's content has been destroyed.
   resolved conflicts rather than hiding them.
 - **Entity resolution** ([resolver.py](src/attestari/resolver.py)) — a
   candidate → score → merge pipeline with auto-merge and human-review bands;
-  every merge is reversible via `EntityUnmerged`.
+  every merge is reversible via `EntityUnmerged`. Reads don't consult merges yet:
+  search, timeline and answer still see each surface form separately.
 
 ## Surfaces
 
