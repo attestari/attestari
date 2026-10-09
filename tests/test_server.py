@@ -56,6 +56,17 @@ def test_add_search_timeline_provenance_forget_graph() -> None:
     assert after["results"] == []
 
 
+def test_add_for_a_forgotten_subject_is_409() -> None:
+    c = _client()
+    c.post("/v1/add", json={"text": "I live in Delhi.", "subject_id": "u1"})
+    c.post("/v1/forget/u1")
+
+    r = c.post("/v1/add", json={"text": "I live in Berlin.", "subject_id": "u1"})
+    assert r.status_code == 409
+    assert "forgotten" in r.json()["detail"]
+    assert c.get("/v1/timeline", params={"subject_id": "u1"}).json()["edges"] == []
+
+
 def test_console_is_served() -> None:
     r = _client().get("/")
     assert r.status_code == 200

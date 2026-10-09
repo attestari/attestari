@@ -29,6 +29,7 @@ from pydantic import BaseModel
 
 from .memory import Memory
 from .projection import Edge
+from .store import ForgottenSubjectError
 
 
 def _default_memory() -> Memory:
@@ -174,16 +175,23 @@ def create_app(memory: Memory | None = None) -> FastAPI:
         not erased, so history stays reconstructable. `valid_from` (ISO date)
         backdates when the facts became true in the world. Returns the ids of
         the newly asserted facts.
+
+        A subject that has been forgotten accepts no new content: the request
+        returns **409** and nothing is stored. Use a new `subject_id` for
+        someone who comes back.
         """
-        fact_ids = mem.add(
-            req.text,
-            subject_id=req.subject_id,
-            agent_id=req.agent_id,
-            session_id=req.session_id,
-            org_id=req.org_id,
-            valid_from=_checked_iso(req.valid_from, "valid_from"),
-            source_ref=req.source_ref,
-        )
+        try:
+            fact_ids = mem.add(
+                req.text,
+                subject_id=req.subject_id,
+                agent_id=req.agent_id,
+                session_id=req.session_id,
+                org_id=req.org_id,
+                valid_from=_checked_iso(req.valid_from, "valid_from"),
+                source_ref=req.source_ref,
+            )
+        except ForgottenSubjectError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"fact_ids": fact_ids}
 
     @app.get("/v1/search", summary="Hybrid recall — now, or as of any past instant")
@@ -279,9 +287,12 @@ def create_app(memory: Memory | None = None) -> FastAPI:
             """Write through the governance layer: the message is recorded in
             the tamper-evident chain *first*, then forwarded upstream. An
             upstream failure propagates (502) with the attempt already on
-            record."""
+            record. A forgotten subject is refused (409) before anything is
+            recorded or forwarded."""
             try:
                 result = governed.add(req.text, subject_id=req.subject_id)
+            except ForgottenSubjectError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
             except Exception as exc:  # noqa: BLE001 - surfaced as a gateway error
                 raise HTTPException(status_code=502, detail=f"upstream add failed: {exc}") from exc
             return {"upstream": result}

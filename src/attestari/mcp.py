@@ -24,6 +24,7 @@ from typing import Any
 
 from .memory import ManifestChanged, Memory
 from .records import DeletionCertificate
+from .store import ForgottenSubjectError
 
 
 def _memory() -> Memory:
@@ -56,15 +57,23 @@ def tool_add(
     session_id: str | None = None,
     source_ref: str | None = None,
 ) -> dict[str, Any]:
-    return {
-        "fact_ids": mem.add(
+    try:
+        fact_ids = mem.add(
             text,
             subject_id=subject_id,
             agent_id=agent_id,
             session_id=session_id,
             source_ref=source_ref,
         )
-    }
+    except ForgottenSubjectError:
+        return {
+            "status": "refused",
+            "error": (
+                "Nothing was stored: this subject's memory was erased, and it accepts no "
+                "new content. Don't retry, and don't store it under another subject_id."
+            ),
+        }
+    return {"fact_ids": fact_ids}
 
 
 def tool_search(

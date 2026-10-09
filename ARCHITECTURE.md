@@ -153,13 +153,21 @@ runs on **one Postgres + pgvector container — no graph database required.**
 
 You keep the certificate as proof it happened; the content is gone.
 
+The subject's records stay closed afterwards. Each store refuses a new episode
+or fact in a forgotten subject's scope with `ForgottenSubjectError` (409 over
+REST). It checks under the same write lock `forget()` takes, so a write racing
+an erasure lands before it or is refused after it. Someone who comes back is
+recorded under a new `subject_id`.
+
 **Crypto-shred** ([crypto.py](src/attestari/crypto.py)) makes that erasure provable
 even against backups: each subject's PII is encrypted at rest with a per-subject
 data key (wrapped under a root KEK). `forget()` destroys the data key, so the
 ciphertext is permanently unrecoverable while the immutable rows and the signed
 certificate remain. This resolves the usual tension between event sourcing ("never
 delete") and erasure ("delete on request"). Opt in via the `ATTESTARI_KEK`
-environment variable.
+environment variable. A write reads the subject's wrapped key from the keyring
+inside its own transaction, not from a per-process cache, so a key that a
+rolled-back write minted, or that another worker shredded, is never reused.
 
 ## Tamper-evident audit chain
 

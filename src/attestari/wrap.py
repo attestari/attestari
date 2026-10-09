@@ -227,7 +227,9 @@ class WrappedMemory:
 
         Ledger first, deliberately: if the downstream write fails we want the
         attempt on record. The downstream exception still propagates — this
-        governs the call, it does not swallow it."""
+        governs the call, it does not swallow it. A subject that has been
+        forgotten raises `ForgottenSubjectError` from the ledger, so nothing
+        reaches downstream either."""
         self.ledger.add(text, subject_id=subject_id, source_ref=source_ref)
         return self.adapter.call_add(self.client, text, subject_id, **kw)
 

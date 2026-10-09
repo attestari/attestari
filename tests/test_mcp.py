@@ -43,6 +43,17 @@ def test_forget_refuses_when_records_changed_since_the_preview() -> None:
     assert not mem.is_forgotten("u1")
 
 
+def test_add_for_a_forgotten_subject_is_refused_not_a_crash() -> None:
+    mem = Memory()
+    tool_add(mem, "I live in Delhi.", subject_id="u1")
+    preview = tool_forget(mem, "u1")
+    tool_forget(mem, "u1", confirm_manifest_hash=preview["manifest_hash"])
+
+    out = tool_add(mem, "I live in Berlin.", subject_id="u1")
+    assert out["status"] == "refused" and "another subject_id" in out["error"]
+    assert tool_search(mem, "where does the user live", subject_id="u1")["results"] == []
+
+
 def test_forget_tool_is_opt_in_and_flagged_destructive(monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("mcp")
     import asyncio

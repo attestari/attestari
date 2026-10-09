@@ -131,7 +131,12 @@ class Memory:
         source_ref: str | None = None,
     ) -> list[str]:
         """Ingest a message: store the episode, extract facts, dedup, supersede
-        any prior value for the same subject+predicate, append assertions."""
+        any prior value for the same subject+predicate, append assertions.
+
+        Raises `ForgottenSubjectError`, writing nothing, if `forget()` has
+        erased `subject_id`. If a forget lands while this call is extracting,
+        it erases the episode this call already wrote, and the facts are
+        refused with the same error."""
         scope = Scope(subject_id=subject_id, agent_id=agent_id, session_id=session_id, org_id=org_id)
         vfrom = _coerce_dt(valid_from) or utcnow()
 

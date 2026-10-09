@@ -182,20 +182,26 @@ class KeyManager:
     def __init__(self, cipher: NullCipher | EnvelopeCipher, keyring: Keyring) -> None:
         self.cipher = cipher
         self.keyring = keyring
-        self._dek: dict[str, bytes] = {}  # subject_id -> unwrapped DEK (per-process cache)
+        self._unwrapped: dict[bytes, bytes] = {}  # wrapped DEK -> DEK (per-process memo)
 
     def dek_for(self, subject_id: str) -> bytes:
-        """Get (or create + persist) the subject's data key, unwrapped."""
-        if subject_id in self._dek:
-            return self._dek[subject_id]
+        """Get (or create + persist) the subject's data key, unwrapped.
+
+        The keyring is read on every call, and writes call this inside the
+        store's write transaction. A cache by subject could outlive the
+        keyring row: a key minted by a write that then rolled back, or one
+        another worker shredded, and the subject's next writes would be sealed
+        under a key nothing stores. Only the unwrap is memoised, keyed by the
+        wrapped bytes, which no other key shares."""
         wrapped = self.keyring.get(subject_id)
-        if wrapped is not None:
-            dek = self.cipher.unwrap(wrapped)
-        else:
+        if wrapped is None:
             dek = self.cipher.new_dek()
-            self.keyring.put(subject_id, self.cipher.wrap(dek))
-        self._dek[subject_id] = dek
-        return dek
+            wrapped = self.cipher.wrap(dek)
+            self.keyring.put(subject_id, wrapped)
+            self._unwrapped[wrapped] = dek
+        elif wrapped not in self._unwrapped:
+            self._unwrapped[wrapped] = self.cipher.unwrap(wrapped)
+        return self._unwrapped[wrapped]
 
     def live_deks(self) -> dict[str, bytes]:
         """All subjects whose DEK is intact (used to decrypt on read)."""
@@ -205,8 +211,10 @@ class KeyManager:
 
     def shred(self, subject_id: str) -> None:
         """Destroy the subject's DEK — their ciphertext becomes unrecoverable."""
+        wrapped = self.keyring.get(subject_id)
         self.keyring.delete(subject_id)
-        self._dek.pop(subject_id, None)
+        if wrapped is not None:
+            self._unwrapped.pop(wrapped, None)
 
     def encrypt_for(self, subject_id: str, text: str) -> str:
         """Encrypt `text` under the subject's DEK (creating the DEK if new)."""
@@ -232,20 +240,22 @@ class KeyManager:
         if not self.cipher.enabled:
             return event, event
         if isinstance(event, EpisodeIngested) and event.scope.subject_id:
-            sid = event.scope.subject_id
-            committed = dataclasses.replace(event, content_hash=self.commit(sid, event.payload))
-            stored = dataclasses.replace(committed, payload=self.encrypt_for(sid, event.payload))
+            dek = self.dek_for(event.scope.subject_id)
+            content_hash = keyed_commitment(commitment_key(dek), event.payload)
+            committed = dataclasses.replace(event, content_hash=content_hash)
+            stored = dataclasses.replace(committed, payload=self.cipher.encrypt(dek, event.payload))
             return committed, stored
         if isinstance(event, FactAsserted) and event.scope.subject_id:
-            sid = event.scope.subject_id
-            committed = dataclasses.replace(event, object_hash=self.commit(sid, event.object))
-            stored = dataclasses.replace(committed, object=self.encrypt_for(sid, event.object))
+            dek = self.dek_for(event.scope.subject_id)
+            object_hash = keyed_commitment(commitment_key(dek), event.object)
+            committed = dataclasses.replace(event, object_hash=object_hash)
+            stored = dataclasses.replace(committed, object=self.cipher.encrypt(dek, event.object))
             return committed, stored
         return event, event
 
     def reset_cache(self) -> None:
-        """Drop unwrapped-DEK cache (e.g. after a test truncate)."""
-        self._dek.clear()
+        """Drop the unwrapped-DEK memo (e.g. after a test truncate)."""
+        self._unwrapped.clear()
 
 
 def certificate_payload(cert: DeletionCertificate) -> bytes:

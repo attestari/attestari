@@ -9,7 +9,7 @@ user's data can be **provably deleted** with a signed certificate.
 
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![python](https://img.shields.io/badge/python-3.11%2B-blue)
-![tests](https://img.shields.io/badge/tests-138%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-158%20passing-brightgreen)
 ![deps](https://img.shields.io/badge/core-zero%20dependencies-brightgreen)
 
 ```python
@@ -275,6 +275,9 @@ other fields stay readable after an erasure — `subject_id`, a fact's subject a
 predicate (with Claude extraction the subject can be a person's name), scope ids,
 timestamps, character spans (which reveal a value's length) and `source_ref`. So
 use opaque, pseudonymous `subject_id`s and keep personal data out of `source_ref`.
+An erased `subject_id` stays closed: `add()` for it raises `ForgottenSubjectError`
+and stores nothing (`POST /v1/add` returns 409, and the MCP tool refuses), so
+record someone who comes back under a new id.
 Postgres keeps a register of certificates; `Memory()` and `Memory.local()` hand
 the certificate back once from `forget()`, so store it yourself there.
 
@@ -290,6 +293,11 @@ the certificate back once from `forget()`, so store it yourself there.
   the same old value, leaving two live values for a single-valued predicate.
   Later releases decide supersession under the store's write lock, so concurrent
   writes are safe.
+- **Writes after an erasure:** on 0.0.7 and earlier, check `is_forgotten(subject_id)`
+  before `add()`. With a KEK set, a write for a forgotten subject makes every
+  later read of the log fail with `InvalidTag`, for every subject. To recover,
+  delete that subject's row from the `keyring` table. Later releases refuse the
+  write instead.
 - **Extraction & embeddings:** set `ANTHROPIC_API_KEY` (extraction auto-upgrades
   to Claude) and install `[embeddings]` for real semantic vectors.
 - **Keys:** inject `ATTESTARI_KEK` from a KMS/secrets manager as an env var — never

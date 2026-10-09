@@ -12,7 +12,7 @@ import importlib.util
 
 import pytest
 
-from attestari import Memory
+from attestari import ForgottenSubjectError, Memory
 from attestari.wrap import (
     WRAP_AGENT_ID,
     Adapter,
@@ -167,6 +167,18 @@ def test_the_downstream_delete_record_survives_the_subject_erasure() -> None:
     assert "u1" in episodes[0].payload and "ok" in episodes[0].payload
     # It carries the outcome and the subject id — and no subject content.
     assert "Delhi" not in episodes[0].payload
+
+
+def test_a_forgotten_subject_is_refused_before_anything_reaches_downstream() -> None:
+    governed, client = _wrapped()
+    governed.add("I live in Delhi.", subject_id="u1")
+    governed.forget("u1")
+
+    with pytest.raises(ForgottenSubjectError):
+        governed.add("I live in Berlin.", subject_id="u1")
+
+    assert "u1" not in client.store
+    assert governed.verify_audit(deep=True).ok
 
 
 def test_dry_run_touches_neither_store() -> None:

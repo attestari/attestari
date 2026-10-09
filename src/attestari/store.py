@@ -25,6 +25,28 @@ from .crypto import EnvelopeCipher, InMemoryKeyring, KeyManager, NullCipher, cip
 from .events import EpisodeIngested, Event, FactAsserted, SubjectForgotten
 
 
+class ForgottenSubjectError(Exception):
+    """A write carried an episode or fact for a subject that `forget()` has
+    erased. Nothing was written: a forgotten subject's records stay closed, so
+    a person who comes back needs a new subject id."""
+
+    def __init__(self, subject_id: str) -> None:
+        super().__init__(
+            "this subject was forgotten, so its records accept no new content and "
+            "nothing was written; store new data under a new subject id"
+        )
+        self.subject_id = subject_id
+
+
+def content_subject(event: Event) -> str | None:
+    """The subject whose content an episode or fact carries (its scope's
+    subject), or None for every other event. These are the events a forgotten
+    subject's records refuse."""
+    if isinstance(event, (EpisodeIngested, FactAsserted)):
+        return event.scope.subject_id
+    return None
+
+
 @runtime_checkable
 class EventStore(Protocol):
     """A durable, totally-ordered, append-only log of events.
@@ -33,7 +55,11 @@ class EventStore(Protocol):
     the appends inside it commit together, and no other writer (thread or
     process) appends in between. `Memory` holds it while it decides supersession
     from the live state and writes the result. A store without one gets a lock
-    that only covers the threads of one `Memory`."""
+    that only covers the threads of one `Memory`.
+
+    They also refuse an episode or fact for a subject with a `SubjectForgotten`
+    tombstone, raising `ForgottenSubjectError`. They check under that lock, so a
+    write racing a `forget()` lands before the erasure or is refused after it."""
 
     def append(self, event: Event) -> None: ...
 
@@ -70,6 +96,7 @@ class InMemoryEventStore:
         # two data keys.
         self._lock = threading.RLock()
         self._write_depth = 0
+        self._forgotten: set[str] = set()  # subjects with a tombstone on the log
 
     # --- crypto-shred key management ------------------------------------ #
 
@@ -125,6 +152,9 @@ class InMemoryEventStore:
             except BaseException:
                 del self._log[log_n:]
                 del self._audit[audit_n:]
+                self._forgotten = {
+                    ev.subject_id for ev in self._log if isinstance(ev, SubjectForgotten)
+                }
                 raise
             finally:
                 self._write_depth = 0
@@ -135,6 +165,9 @@ class InMemoryEventStore:
         # content-faithful, survives a later shred, and can't confirm guesses
         # after one). See KeyManager.seal.
         with self.write_lock():
+            sid = content_subject(event)
+            if sid is not None and sid in self._forgotten:
+                raise ForgottenSubjectError(sid)
             committed, stored = self._keys.seal(event)
             self._log.append(stored)
 
@@ -142,6 +175,8 @@ class InMemoryEventStore:
             # with the Postgres adapter, so the two chains cannot diverge).
             prev = self._audit[-1].entry_hash if self._audit else GENESIS
             self._audit.append(next_entry(prev, len(self._audit) + 1, committed))
+            if isinstance(event, SubjectForgotten):
+                self._forgotten.add(event.subject_id)
 
     def events(self) -> list[Event]:
         with self._lock:

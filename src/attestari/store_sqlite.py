@@ -48,6 +48,7 @@ from .events import (
     Scope,
     SubjectForgotten,
 )
+from .store import ForgottenSubjectError, content_subject
 
 DEFAULT_PATH = "~/.attestari/attestari.db"
 
@@ -157,6 +158,8 @@ class SQLiteEventStore:
                 kind    TEXT NOT NULL,
                 payload TEXT NOT NULL         -- JSON event (PII already encrypted at rest)
             );
+            -- Finds the tombstones a write checks for (see append).
+            CREATE INDEX IF NOT EXISTS event_kind_idx ON event (kind);
             CREATE TABLE IF NOT EXISTS audit_entry (
                 seq          INTEGER PRIMARY KEY,
                 kind         TEXT NOT NULL,
@@ -243,8 +246,23 @@ class SQLiteEventStore:
             finally:
                 self._write_depth = 0
 
+    def _is_forgotten(self, subject_id: str) -> bool:
+        # instr() narrows the tombstones to those containing the id as _encode
+        # writes it, without needing SQLite's optional JSON functions; parsing
+        # confirms the match is the subject_id field.
+        rows = self._conn.execute(
+            "SELECT payload FROM event WHERE kind = 'subject_forgotten' AND instr(payload, ?) > 0",
+            (json.dumps(subject_id, ensure_ascii=False),),
+        ).fetchall()
+        return any(json.loads(r["payload"])["subject_id"] == subject_id for r in rows)
+
     def append(self, event: Event) -> None:
         with self.write_lock():
+            # Checked inside the transaction, so a forget() from another
+            # connection lands before this write or refuses it.
+            sid = content_subject(event)
+            if sid is not None and self._is_forgotten(sid):
+                raise ForgottenSubjectError(sid)
             # Seal inside the transaction so a freshly-minted DEK commits
             # atomically with the event it protects (KeyManager.seal).
             committed, stored = self._keys.seal(event)

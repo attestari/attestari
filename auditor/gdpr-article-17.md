@@ -119,6 +119,12 @@ timestamps, character spans (which reveal a value's length) and `source_ref`.
 Use opaque, pseudonymous `subject_id`s, and keep personal data out of
 `source_ref`.
 
+An erased `subject_id` stays closed. Attestari refuses any new message or fact
+recorded under it, so nothing about the person builds up under that id again
+after the request. If the person comes back and agrees to be remembered, record
+them under a new `subject_id`. Releases up to 0.0.7 accepted such writes, so
+upgrade before relying on this.
+
 ## Previewing before you erase
 
 Erasure is one-way. `forget(dry_run=True)` computes and returns the certificate

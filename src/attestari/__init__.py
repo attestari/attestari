@@ -39,7 +39,7 @@ from .resolver import (
 )
 from .projection import Edge, Entity, Projection, Projector
 from .retrieve import SearchResult, search
-from .store import EventStore, InMemoryEventStore
+from .store import EventStore, ForgottenSubjectError, InMemoryEventStore
 from .store_postgres import PostgresEventStore, PostgresProjectionBackend
 from .store_sqlite import SQLiteEventStore
 
@@ -49,6 +49,7 @@ __all__ = [
     "Memory",
     "DeletionCertificate",
     "ManifestChanged",
+    "ForgottenSubjectError",
     "Provenance",
     "Edge",
     "Entity",

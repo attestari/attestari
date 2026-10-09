@@ -130,6 +130,8 @@ And on `mem.search("where does the user live", subject_id="u1")`:
 
 `forget("u1")` appends a `SubjectForgotten` event, destroys u1's encryption key,
 rebuilds the projection (u1 is gone), and returns a **certificate** proving it.
+From then on, `add()` for u1 is refused with `ForgottenSubjectError`, so nothing
+new builds up under an erased id.
 
 ---
 

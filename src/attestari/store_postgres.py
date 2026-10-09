@@ -37,6 +37,7 @@ from .events import (
 from .projection import Edge, Projection, Projector
 from .records import DeletionCertificate
 from .retrieve import SearchResult, weights_for
+from .store import ForgottenSubjectError, content_subject
 
 _DEFAULT_DSN = "postgresql://attestari:attestari@localhost:5432/attestari"
 
@@ -195,6 +196,17 @@ class PostgresEventStore:
                 finally:
                     self._write_depth = 0
 
+    def _is_forgotten(self, subject_id: str) -> bool:
+        # The tombstone keeps the forgotten subject id in `subject`.
+        return (
+            self._conn.execute(
+                """SELECT 1 FROM fact_event
+                   WHERE subject = %s AND op = 'subject_forgotten' LIMIT 1""",
+                (subject_id,),
+            ).fetchone()
+            is not None
+        )
+
     def append(self, event: Event) -> None:
         # One transaction per append (or the enclosing write_lock's): the event
         # row and its audit entry commit atomically, so a crash cannot leave the
@@ -202,6 +214,11 @@ class PostgresEventStore:
         # appenders so two writers can never read the same prev_hash and fork
         # the chain.
         with self.write_lock():
+            # Checked under the log lock, so a forget() from another worker
+            # lands before this write or refuses it.
+            sid = content_subject(event)
+            if sid is not None and self._is_forgotten(sid):
+                raise ForgottenSubjectError(sid)
             row = self._conn.execute(
                 "SELECT seq, entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
             ).fetchone()
