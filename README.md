@@ -45,7 +45,7 @@ has **zero dependencies**.
 - [Provable deletion + tamper-evident audit, in one demo](#provable-deletion--tamper-evident-audit-in-one-demo)
 - [Already using Mem0 or Zep? Wrap it](#already-using-mem0-or-zep-wrap-it)
 - [For auditors and DPOs](#for-auditors-and-dpos)
-- [How it works](#how-it-works)
+- [How it works](#how-it-works) — and [the Atlas](https://attestari.github.io/attestari/atlas/), the engine on one illustrated page
 - [Project layout](#project-layout)
 - [Docs & contributing](#docs--contributing)
 
@@ -472,6 +472,9 @@ knowledge graph, the vector index, the keyword index) is a **projection** you ca
 rebuild from it. That's why audit, time-travel, provenance, and provable deletion
 fall out of the design instead of being bolted on.
 
+- [The Attestari Atlas](https://attestari.github.io/attestari/atlas/) — the whole engine on
+  one illustrated page: every write, read and erase, the audit chain you can tamper with in
+  the browser, where it fits, and its sharp edges. Written for 0.0.7.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — the design, end to end.
 - [LEARN.md](LEARN.md) — the same ideas explained from scratch, for newcomers.
 
