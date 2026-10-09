@@ -8,6 +8,7 @@ with the materialised-projection backend (pgvector + full-text retrieval).
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import os
 import uuid
@@ -41,6 +42,19 @@ def _coerce_dt(value: datetime | str | None) -> datetime | None:
         return None
     dt = datetime.fromisoformat(value) if isinstance(value, str) else value
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+class ManifestChanged(Exception):
+    """`forget(expected_manifest=...)` refused: the subject's records are no
+    longer the ones that were previewed, so nothing was erased. `preview` is
+    the current dry-run certificate, for reviewing the new blast radius."""
+
+    def __init__(self, preview: DeletionCertificate) -> None:
+        super().__init__(
+            f"records for subject {preview.subject_id!r} don't match the expected "
+            "manifest; nothing was erased"
+        )
+        self.preview = preview
 
 
 class Memory:
@@ -304,7 +318,12 @@ class Memory:
     # --- deletion ------------------------------------------------------- #
 
     def forget(
-        self, subject_id: str, *, requested_by: str = "system", dry_run: bool = False
+        self,
+        subject_id: str,
+        *,
+        requested_by: str = "system",
+        dry_run: bool = False,
+        expected_manifest: str | None = None,
     ) -> DeletionCertificate:
         """Right-to-be-forgotten: destroy the subject's lineage and return a
         certificate proving it happened — HMAC-signed under a KEK-derived key
@@ -315,7 +334,12 @@ class Memory:
         be issued is computed and returned (same subject, counts, and manifest
         hash) so you can confirm the blast radius before committing to a one-way
         operation. The preview is left unsigned (`signature is None`), so a dry
-        run can never be mistaken for — or verify as — a real deletion proof."""
+        run can never be mistaken for — or verify as — a real deletion proof.
+
+        Pass a preview's `manifest_hash` as `expected_manifest` to erase only if
+        the subject's records are still exactly the previewed ones; otherwise
+        `ManifestChanged` is raised and nothing is destroyed, so a confirmed
+        erasure covers what was reviewed, no more and no less."""
         before = self._project()
         episodes = [e for e in before.episodes.values() if e.scope.subject_id == subject_id]
         facts = [e for e in before.edges.values() if e.subject_id == subject_id]
@@ -333,6 +357,8 @@ class Memory:
             issued_at=utcnow(),
             dry_run=dry_run,
         )
+        if expected_manifest is not None and expected_manifest != manifest_hash:
+            raise ManifestChanged(dataclasses.replace(certificate, dry_run=True))
         # A preview reports the blast radius and touches nothing — no signature
         # (it isn't a proof), no tombstone, no key destruction.
         if dry_run:

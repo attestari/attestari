@@ -9,14 +9,21 @@ remember, recall, trace provenance, and forget — over stdio.
 
 The tool *logic* lives in plain `tool_*` functions (unit-testable without the mcp
 package); `create_server` registers thin MCP wrappers around them.
+
+`forget_subject` is opt-in (ATTESTARI_MCP_ALLOW_FORGET=1). Erasure can't be
+undone and an agent can be steered by text it reads, so the server doesn't offer
+it unless the operator asks. When offered, it is flagged destructive and takes
+two calls: a preview, then a confirmation that carries the preview's manifest hash.
 """
 
 from __future__ import annotations
 
+import inspect
 import os
 from typing import Any
 
-from .memory import Memory
+from .memory import ManifestChanged, Memory
+from .records import DeletionCertificate
 
 
 def _memory() -> Memory:
@@ -99,9 +106,52 @@ def tool_provenance(mem: Memory, fact_id: str) -> dict[str, Any]:
     }
 
 
-def tool_forget(mem: Memory, subject_id: str, requested_by: str = "mcp") -> dict[str, Any]:
-    c = mem.forget(subject_id, requested_by=requested_by)
+def _blast_radius(preview: DeletionCertificate) -> dict[str, Any]:
     return {
+        "subject_id": preview.subject_id,
+        "episodes": preview.episodes_deleted,
+        "facts": preview.facts_deleted,
+        "manifest_hash": preview.manifest_hash,
+    }
+
+
+def tool_forget(
+    mem: Memory,
+    subject_id: str,
+    requested_by: str = "mcp",
+    confirm_manifest_hash: str | None = None,
+) -> dict[str, Any]:
+    """Erasure in two calls. Without `confirm_manifest_hash` it is a preview:
+    nothing is destroyed, and the reply carries the counts and manifest hash.
+    With that hash it erases, but only if the subject's records still match
+    the preview."""
+    if confirm_manifest_hash is None:
+        preview = mem.forget(subject_id, requested_by=requested_by, dry_run=True)
+        return {
+            "status": "preview",
+            **_blast_radius(preview),
+            "next": (
+                "Nothing was erased. Erasure is irreversible: show this to the user, and "
+                "only with their explicit approval call forget_subject again with "
+                "confirm_manifest_hash set to this manifest_hash."
+            ),
+        }
+    try:
+        c = mem.forget(
+            subject_id, requested_by=requested_by, expected_manifest=confirm_manifest_hash
+        )
+    except ManifestChanged as e:
+        return {
+            "status": "refused",
+            "error": (
+                "The subject's records don't match that manifest_hash (they changed since "
+                "the preview, or the hash is wrong). Nothing was erased. Below is the "
+                "current preview; review it with the user before confirming again."
+            ),
+            **_blast_radius(e.preview),
+        }
+    return {
+        "status": "erased",
         "certificate_id": c.certificate_id,
         "facts_deleted": c.facts_deleted,
         "episodes_deleted": c.episodes_deleted,
@@ -113,11 +163,34 @@ def tool_forget(mem: Memory, subject_id: str, requested_by: str = "mcp") -> dict
 
 # --- MCP wiring ----------------------------------------------------------- #
 
-def create_server(memory: Memory | None = None):
-    """Build the FastMCP server. Requires the `mcp` package."""
+def _destructive(fastmcp_cls: Any) -> dict[str, Any]:
+    """`tool()` kwargs flagging a tool destructive, so MCP clients that honour
+    tool annotations ask the user before each call. Empty on mcp releases
+    without annotations; the opt-in and the two steps apply regardless."""
+    try:
+        from mcp.types import ToolAnnotations
+    except ImportError:  # pragma: no cover - mcp without tool annotations
+        return {}
+    if "annotations" not in inspect.signature(fastmcp_cls.tool).parameters:
+        return {}  # pragma: no cover
+    return {
+        "annotations": ToolAnnotations(
+            destructiveHint=True, readOnlyHint=False, openWorldHint=False
+        )
+    }
+
+
+def create_server(memory: Memory | None = None, *, allow_forget: bool | None = None):
+    """Build the FastMCP server. Requires the `mcp` package.
+
+    `forget_subject` is registered only when `allow_forget` is true; left as
+    None, it follows ATTESTARI_MCP_ALLOW_FORGET=1. See the module docstring."""
     from mcp.server.fastmcp import FastMCP
 
     mem = memory or _memory()
+    if allow_forget is None:
+        flag = os.environ.get("ATTESTARI_MCP_ALLOW_FORGET", "").strip().lower()
+        allow_forget = flag in {"1", "true", "yes"}
     server = FastMCP("attestari")
 
     @server.tool()
@@ -143,10 +216,23 @@ def create_server(memory: Memory | None = None):
         """Trace a remembered fact back to its source episode and exact snippet."""
         return tool_provenance(mem, fact_id)
 
-    @server.tool()
-    def forget_subject(subject_id: str, requested_by: str = "mcp") -> dict:
-        """Right-to-be-forgotten: erase a subject; returns a deletion certificate."""
-        return tool_forget(mem, subject_id, requested_by=requested_by)
+    if allow_forget:
+
+        @server.tool(**_destructive(FastMCP))
+        def forget_subject(
+            subject_id: str, requested_by: str = "mcp", confirm_manifest_hash: str | None = None
+        ) -> dict:
+            """Right-to-be-forgotten, in two calls. Irreversible.
+            1. Call without confirm_manifest_hash: a preview. Nothing is erased;
+               it returns the record counts and a manifest_hash.
+            2. Show the preview to the user. Only with their explicit approval,
+               call again with confirm_manifest_hash set to that hash: it erases
+               exactly the previewed records (refused if they changed since) and
+               returns a deletion certificate."""
+            return tool_forget(
+                mem, subject_id, requested_by=requested_by,
+                confirm_manifest_hash=confirm_manifest_hash,
+            )
 
     return server
 

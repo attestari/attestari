@@ -192,7 +192,8 @@ uvicorn attestari.server:app   # API at /v1/*, the memory-graph console at /
 ```
 
 **As an MCP server** (any agent — Claude, frameworks — can use it) — exposes
-`add_memory / search_memory / get_provenance / forget_subject` over stdio.
+`add_memory / search_memory / get_provenance` over stdio, plus `forget_subject`
+if you opt in (below).
 Register it in your MCP client's config (e.g. Claude Desktop's
 `claude_desktop_config.json`); the client launches the process for you:
 
@@ -218,6 +219,15 @@ config lives — add `ATTESTARI_DATABASE_URL` to use Postgres instead of SQLite,
 crypto-shred. To run it standalone (e.g. to debug): `attestari-mcp` (or
 `python -m attestari.mcp`). Without a local install, MCP clients can spawn it
 straight from PyPI: `uvx --from "attestari[server]" attestari-mcp`.
+
+**Erasure over MCP is opt-in.** An agent can be steered by text it reads, and
+erasure can't be undone, so `forget_subject` is only offered when the `env`
+block sets `"ATTESTARI_MCP_ALLOW_FORGET": "1"`. It is then flagged destructive
+(clients that honour tool annotations ask before running it) and takes two
+calls: the first previews what would be erased and returns a `manifest_hash`;
+the second passes that hash back as `confirm_manifest_hash`, and erases only if
+the subject's records still match the preview. Leave it off unless the agent is
+meant to erase people; `Memory.forget()` and `POST /v1/forget` are unaffected.
 
 **From TypeScript** — the TS client talks to the REST API, so **start the server
 first** (see above; it defaults to `http://localhost:8000`). Then see
@@ -298,6 +308,7 @@ boundary in [docs/the-moat.md](docs/the-moat.md).
 | `ATTESTARI_DATABASE_URL` | Postgres DSN; the server/MCP use Postgres instead of local SQLite. |
 | `ATTESTARI_SQLITE_PATH` | Where `Memory.local()`-backed server/MCP keep the SQLite file (default `~/.attestari/attestari.db`). |
 | `ATTESTARI_KEK` | Root key-encryption key; turns on crypto-shred deletion. |
+| `ATTESTARI_MCP_ALLOW_FORGET` | `1` offers the `forget_subject` tool on the MCP server (off by default; two calls when on). |
 | `ATTESTARI_PG_PORT` | Host port for the bundled `docker compose` Postgres (default 5432). |
 | `ATTESTARI_WRAP_UPSTREAM` | Base URL of a memory service to govern; mounts the `/v1/wrap/*` endpoints (unset = no wrap routes). |
 | `ATTESTARI_WRAP_UPSTREAM_TOKEN` | Sent to the upstream as `Authorization: Bearer …`. |

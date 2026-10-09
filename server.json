@@ -47,6 +47,11 @@
           "default": "~/.attestari/attestari.db"
         },
         {
+          "name": "ATTESTARI_MCP_ALLOW_FORGET",
+          "description": "Set to 1 to offer the forget_subject tool (off by default, since erasure is irreversible and an agent can be steered by what it reads). When on, it is flagged destructive and takes two calls: a preview that returns a manifest hash, then a confirmation that passes it back.",
+          "isRequired": false
+        },
+        {
           "name": "ANTHROPIC_API_KEY",
           "description": "Enables Claude-powered fact extraction; falls back to the built-in regex extractor when unset.",
           "isRequired": false,

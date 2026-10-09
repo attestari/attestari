@@ -18,9 +18,47 @@ def test_mcp_tools_roundtrip() -> None:
     fact_id = result["results"][0]["fact_id"]
     assert tool_provenance(mem, fact_id)["snippet"] == "Delhi"
 
-    cert = tool_forget(mem, "u1")
-    assert cert["facts_deleted"] >= 1
+    # Erasure takes two calls: a preview that destroys nothing...
+    preview = tool_forget(mem, "u1")
+    assert preview["status"] == "preview" and preview["facts"] >= 1
+    assert tool_search(mem, "where does the user live", subject_id="u1")["results"]
+
+    # ...then a confirmation carrying the preview's manifest hash.
+    cert = tool_forget(mem, "u1", confirm_manifest_hash=preview["manifest_hash"])
+    assert cert["status"] == "erased" and cert["facts_deleted"] == preview["facts"]
     assert tool_search(mem, "where does the user live", subject_id="u1")["results"] == []
+
+
+def test_forget_refuses_when_records_changed_since_the_preview() -> None:
+    mem = Memory()
+    tool_add(mem, "Hi, my name is Dana. I live in Delhi.", subject_id="u1")
+    preview = tool_forget(mem, "u1")
+    tool_add(mem, "I work at Acme.", subject_id="u1")  # arrives after the user reviewed
+
+    out = tool_forget(mem, "u1", confirm_manifest_hash=preview["manifest_hash"])
+    assert out["status"] == "refused"
+    assert out["facts"] == preview["facts"] + 1  # the current preview, for re-review
+    assert not mem.is_forgotten("u1")
+    assert tool_forget(mem, "u1", confirm_manifest_hash="made-up")["status"] == "refused"
+    assert not mem.is_forgotten("u1")
+
+
+def test_forget_tool_is_opt_in_and_flagged_destructive(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("mcp")
+    import asyncio
+
+    from attestari.mcp import create_server
+
+    def tools(**kw) -> dict:
+        return {t.name: t for t in asyncio.run(create_server(Memory(), **kw).list_tools())}
+
+    monkeypatch.delenv("ATTESTARI_MCP_ALLOW_FORGET", raising=False)
+    assert "forget_subject" not in tools() and "add_memory" in tools()
+
+    monkeypatch.setenv("ATTESTARI_MCP_ALLOW_FORGET", "1")
+    forget = tools()["forget_subject"]
+    assert forget.annotations is not None and forget.annotations.destructiveHint is True
+    assert "forget_subject" not in tools(allow_forget=False)  # an explicit argument wins
 
 
 def test_mcp_source_ref_flows_to_provenance() -> None:

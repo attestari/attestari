@@ -5,6 +5,8 @@ Run with `python -m pytest -q` (pyproject sets pythonpath=src).
 
 from __future__ import annotations
 
+import pytest
+
 from attestari import Memory
 
 
@@ -96,6 +98,24 @@ def test_forget_dry_run_previews_without_destroying() -> None:
     assert cert.episodes_deleted == preview.episodes_deleted
     assert cert.manifest_hash == preview.manifest_hash
     assert mem.answer("where does the user live", subject_id="u1") is None
+
+
+def test_forget_with_expected_manifest_erases_only_what_was_previewed() -> None:
+    from attestari import ManifestChanged
+
+    mem = _seed()
+    preview = mem.forget("u1", dry_run=True)
+    mem.add("I work at Acme.", subject_id="u1", valid_from="2026-04-01")  # after the review
+
+    with pytest.raises(ManifestChanged) as refused:
+        mem.forget("u1", expected_manifest=preview.manifest_hash)
+    assert not mem.is_forgotten("u1")  # nothing destroyed
+    fresh = refused.value.preview
+    assert fresh.dry_run is True and fresh.facts_deleted == preview.facts_deleted + 1
+
+    cert = mem.forget("u1", expected_manifest=fresh.manifest_hash)
+    assert cert.manifest_hash == fresh.manifest_hash
+    assert mem.is_forgotten("u1")
 
 
 def test_dedup_noop_on_identical_readd() -> None:

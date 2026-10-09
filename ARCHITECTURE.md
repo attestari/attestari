@@ -185,7 +185,9 @@ The same engine is exposed four ways:
   `/v1/*`, with a zero-build graph console ([console.py](src/attestari/console.py))
   served at `/`.
 - **MCP server** ([mcp.py](src/attestari/mcp.py)) — `add_memory`, `search_memory`,
-  `get_provenance`, `forget_subject` for any agent that speaks MCP.
+  `get_provenance` for any agent that speaks MCP, plus `forget_subject` when the
+  operator opts in (`ATTESTARI_MCP_ALLOW_FORGET=1`): flagged destructive, and two
+  calls (a preview, then a confirmation carrying its manifest hash).
 - **TypeScript SDK** ([clients/ts](clients/ts)) — a thin typed client mirroring
   the `Memory` surface over the REST API.
 

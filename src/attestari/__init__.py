@@ -28,7 +28,7 @@ from .extract import (
     Extractor,
     default_extractor,
 )
-from .memory import DeletionCertificate, Memory, Provenance
+from .memory import DeletionCertificate, ManifestChanged, Memory, Provenance
 from .predicates import Cardinality, PredicateRegistry, default_registry
 from .resolver import (
     EntityResolver,
@@ -48,6 +48,7 @@ __version__ = "0.0.6"
 __all__ = [
     "Memory",
     "DeletionCertificate",
+    "ManifestChanged",
     "Provenance",
     "Edge",
     "Entity",

@@ -224,8 +224,9 @@ that draws the memory as a graph with a time-travel slider, click-to-trace
 provenance, and a forget button. *Concept: a thin frontend over the API.*
 
 **`mcp.py` — the agent plug.** Exposes Attestari as **MCP** tools (`add_memory`,
-`search_memory`, `forget_subject`, …) so AI agents (like Claude) can use it
-directly. *Concept: integration/distribution.*
+`search_memory`, …) so AI agents (like Claude) can use it directly. Erasing
+(`forget_subject`) is off unless the operator turns it on, because an agent can
+be talked into things by text it reads. *Concept: integration/distribution.*
 
 **`__init__.py` — the public list.** Re-exports the important classes so users
 write `from attestari import Memory` instead of digging into files. *Concept: a
