@@ -16,6 +16,7 @@ Requires the `postgres` extra:  pip install "attestari[postgres]"
 from __future__ import annotations
 
 import os
+import threading
 from datetime import datetime
 
 from .audit import GENESIS, AuditEntry, next_entry
@@ -37,6 +38,11 @@ from .retrieve import SearchResult, weights_for
 
 _DEFAULT_DSN = "postgresql://attestari:attestari@localhost:5432/attestari"
 
+# Transaction-scoped advisory lock over the whole event log. Appends take it so
+# two writers can't fork the audit chain; projection rebuilds take it so they
+# serialise with appends and with each other, across processes.
+_LOG_LOCK = "SELECT pg_advisory_xact_lock(hashtext('attestari.event_log'))"
+
 
 def _span(lo: int | None, hi: int | None) -> tuple[int, int] | None:
     return (lo, hi) if lo is not None and hi is not None else None
@@ -50,26 +56,31 @@ def _vec_literal(vec: list[float]) -> str:
 class _PostgresKeyring:
     """Keyring adapter over the `keyring` table (wrapped DEKs at rest)."""
 
-    def __init__(self, conn) -> None:
+    def __init__(self, conn, lock: threading.RLock) -> None:
         self._conn = conn
+        self._lock = lock
 
     def get(self, subject_id: str) -> bytes | None:
-        row = self._conn.execute(
-            "SELECT wrapped_dek FROM keyring WHERE subject_id = %s", (subject_id,)
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT wrapped_dek FROM keyring WHERE subject_id = %s", (subject_id,)
+            ).fetchone()
         return bytes(row["wrapped_dek"]) if row is not None else None
 
     def put(self, subject_id: str, wrapped_dek: bytes) -> None:
-        self._conn.execute(
-            "INSERT INTO keyring (subject_id, wrapped_dek) VALUES (%s, %s)",
-            (subject_id, wrapped_dek),
-        )
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO keyring (subject_id, wrapped_dek) VALUES (%s, %s)",
+                (subject_id, wrapped_dek),
+            )
 
     def delete(self, subject_id: str) -> None:
-        self._conn.execute("DELETE FROM keyring WHERE subject_id = %s", (subject_id,))
+        with self._lock:
+            self._conn.execute("DELETE FROM keyring WHERE subject_id = %s", (subject_id,))
 
     def all(self) -> dict[str, bytes]:
-        rows = self._conn.execute("SELECT subject_id, wrapped_dek FROM keyring").fetchall()
+        with self._lock:
+            rows = self._conn.execute("SELECT subject_id, wrapped_dek FROM keyring").fetchall()
         return {r["subject_id"]: bytes(r["wrapped_dek"]) for r in rows}
 
 
@@ -84,11 +95,17 @@ class PostgresEventStore:
 
         self.dsn = dsn or os.environ.get("ATTESTARI_DATABASE_URL", _DEFAULT_DSN)
         self._conn = psycopg.connect(self.dsn, autocommit=True, row_factory=dict_row)
+        # One connection serves every thread that shares this store (FastAPI
+        # runs sync handlers on a thread pool). psycopg does not isolate
+        # transaction blocks between threads — another thread's statement would
+        # run inside ours — so every use of the connection holds this lock,
+        # and the projection backend shares it.
+        self._lock = threading.RLock()
         # Encryption is opt-in: EnvelopeCipher when ATTESTARI_KEK is set, else NullCipher.
         self.cipher = cipher or cipher_from_env()
         # Key lifecycle is delegated to the shared KeyManager; only the resting
         # place of the wrapped DEKs (the keyring table) is adapter-specific.
-        self._keys = KeyManager(self.cipher, _PostgresKeyring(self._conn))
+        self._keys = KeyManager(self.cipher, _PostgresKeyring(self._conn, self._lock))
 
     # --- crypto-shred key management ------------------------------------ #
 
@@ -104,21 +121,22 @@ class PostgresEventStore:
         deletion fails verification instead of hiding."""
         if not self.cipher.enabled:
             return set()
-        rows = self._conn.execute(
-            """WITH gone AS (
-                   SELECT DISTINCT f.subject AS sid FROM fact_event f
-                   WHERE f.op = 'subject_forgotten'
-                     AND NOT EXISTS (SELECT 1 FROM keyring k WHERE k.subject_id = f.subject)
-               )
-               SELECT e.episode_id::text AS ref
-               FROM episode e JOIN gone g ON e.subject_id = g.sid
-               UNION
-               SELECT f.fact_id::text AS ref
-               FROM fact_event f
-                   JOIN episode e ON f.source_episode = e.episode_id
-                   JOIN gone g ON e.subject_id = g.sid
-               WHERE f.op = 'asserted'"""
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                """WITH gone AS (
+                       SELECT DISTINCT f.subject AS sid FROM fact_event f
+                       WHERE f.op = 'subject_forgotten'
+                         AND NOT EXISTS (SELECT 1 FROM keyring k WHERE k.subject_id = f.subject)
+                   )
+                   SELECT e.episode_id::text AS ref
+                   FROM episode e JOIN gone g ON e.subject_id = g.sid
+                   UNION
+                   SELECT f.fact_id::text AS ref
+                   FROM fact_event f
+                       JOIN episode e ON f.source_episode = e.episode_id
+                       JOIN gone g ON e.subject_id = g.sid
+                   WHERE f.op = 'asserted'"""
+            ).fetchall()
         return {r["ref"] for r in rows}
 
     # --- write path ----------------------------------------------------- #
@@ -128,8 +146,8 @@ class PostgresEventStore:
         # atomically (a crash cannot leave the chain out of step with the log),
         # and an advisory xact lock serialises concurrent appenders so two
         # writers can never read the same prev_hash and fork the chain.
-        with self._conn.transaction():
-            self._conn.execute("SELECT pg_advisory_xact_lock(hashtext('attestari.event_log'))")
+        with self._lock, self._conn.transaction():
+            self._conn.execute(_LOG_LOCK)
             row = self._conn.execute(
                 "SELECT seq, entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
             ).fetchone()
@@ -227,7 +245,8 @@ class PostgresEventStore:
             raise TypeError(f"unknown event type: {type(event)!r}")
 
     def audit_entries(self) -> list[AuditEntry]:
-        rows = self._conn.execute("SELECT * FROM audit_entry ORDER BY seq").fetchall()
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM audit_entry ORDER BY seq").fetchall()
         return [
             AuditEntry(
                 seq=r["seq"],
@@ -243,6 +262,21 @@ class PostgresEventStore:
     # --- read path ------------------------------------------------------ #
 
     def events(self) -> list[Event]:
+        from psycopg import pq
+
+        with self._lock:
+            if self._conn.info.transaction_status != pq.TransactionStatus.IDLE:
+                # Called inside a transaction (a rebuild holding the log lock):
+                # no append can land between the reads.
+                return self._read_events()
+            # Otherwise read every table from one snapshot. An append that
+            # commits between the episode and fact reads would yield a fact
+            # whose source episode was never read, and with it the fact's scope.
+            with self._conn.transaction():
+                self._conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+                return self._read_events()
+
+    def _read_events(self) -> list[Event]:
         # Reconstruct in the exact append order the audit chain committed:
         # event_seq (= the audit entry's seq) is a total order across the
         # episode and fact_event tables, so deep verification aligns 1:1.
@@ -368,13 +402,15 @@ class PostgresEventStore:
 
     def truncate(self) -> None:
         """Wipe all events and projections (test/dev helper)."""
-        self._conn.execute(
-            "TRUNCATE episode, fact_event, entity, edge, deletion_certificate, keyring, audit_entry CASCADE"
-        )
-        self._keys.reset_cache()
+        with self._lock:
+            self._conn.execute(
+                "TRUNCATE episode, fact_event, entity, edge, deletion_certificate, keyring, audit_entry CASCADE"
+            )
+            self._keys.reset_cache()
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
 
 
 class PostgresProjectionBackend:
@@ -396,13 +432,15 @@ class PostgresProjectionBackend:
         self.embedder = embedder
         self._projector = Projector(embedder)
         self._conn = store._conn
+        self._lock = store._lock  # same connection, so the same lock
         self._dim = getattr(embedder, "dim", 384)
         self._maybe_initial_rebuild()
 
     def _maybe_initial_rebuild(self) -> None:
         # If we attach to a log that hasn't been materialised yet, build it once.
-        edge_n = self._conn.execute("SELECT count(*) AS n FROM edge").fetchone()["n"]
-        fe_n = self._conn.execute("SELECT count(*) AS n FROM fact_event").fetchone()["n"]
+        with self._lock:
+            edge_n = self._conn.execute("SELECT count(*) AS n FROM edge").fetchone()["n"]
+            fe_n = self._conn.execute("SELECT count(*) AS n FROM fact_event").fetchone()["n"]
         if edge_n == 0 and fe_n > 0:
             self.rebuild()
 
@@ -416,26 +454,28 @@ class PostgresProjectionBackend:
         # Crypto-shred: destroy the subject's DEK so all their ciphertext at rest
         # becomes unrecoverable. The subject's materialised rows are dropped by the
         # rebuild in on_write (the fold then skips the unreadable subject).
-        self.store.shred_subject(certificate.subject_id)
-        # Persist the certificate (the proof retained after the content is gone).
-        self._conn.execute(
-            """INSERT INTO deletion_certificate
-                   (certificate_id, subject_id, requested_by,
-                    episodes_count, facts_count, manifest_hash, issued_at,
-                    signature, algorithm)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-            (
-                certificate.certificate_id,
-                certificate.subject_id,
-                certificate.requested_by,
-                certificate.episodes_deleted,
-                certificate.facts_deleted,
-                certificate.manifest_hash,
-                certificate.issued_at,
-                certificate.signature,
-                certificate.algorithm,
-            ),
-        )
+        # Shred and certificate commit together: no destroyed key without its proof.
+        with self._lock, self._conn.transaction():
+            self.store.shred_subject(certificate.subject_id)
+            # Persist the certificate (the proof retained after the content is gone).
+            self._conn.execute(
+                """INSERT INTO deletion_certificate
+                       (certificate_id, subject_id, requested_by,
+                        episodes_count, facts_count, manifest_hash, issued_at,
+                        signature, algorithm)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    certificate.certificate_id,
+                    certificate.subject_id,
+                    certificate.requested_by,
+                    certificate.episodes_deleted,
+                    certificate.facts_deleted,
+                    certificate.manifest_hash,
+                    certificate.issued_at,
+                    certificate.signature,
+                    certificate.algorithm,
+                ),
+            )
 
     def certificates(self) -> list[DeletionCertificate]:
         """Read back the persisted deletion certificates, oldest first.
@@ -443,12 +483,13 @@ class PostgresProjectionBackend:
         This is the tier's certificate register — what an evidence bundle (or an
         auditor with read access) lists without needing the original caller to
         have kept their copy from `forget()`."""
-        rows = self._conn.execute(
-            """SELECT certificate_id, subject_id, requested_by,
-                      episodes_count, facts_count, manifest_hash, issued_at,
-                      signature, algorithm
-                 FROM deletion_certificate ORDER BY issued_at"""
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT certificate_id, subject_id, requested_by,
+                          episodes_count, facts_count, manifest_hash, issued_at,
+                          signature, algorithm
+                     FROM deletion_certificate ORDER BY issued_at"""
+            ).fetchall()
         return [
             DeletionCertificate(
                 certificate_id=str(r["certificate_id"]),
@@ -465,30 +506,40 @@ class PostgresProjectionBackend:
         ]
 
     def rebuild(self) -> None:
-        """Materialise entity + edge tables from the event log (rebuildable)."""
-        proj = self._projector.build(self.store.events())
-        conn = self._conn
-        conn.execute("TRUNCATE entity, edge")
-        for ent in proj.entities.values():
-            conn.execute(
-                "INSERT INTO entity (canonical_id, aliases) VALUES (%s, %s)",
-                (ent.canonical_id, list(ent.aliases)),
-            )
-        for e in proj.edges.values():
-            lo = e.char_span[0] if e.char_span else None
-            hi = e.char_span[1] if e.char_span else None
-            conn.execute(
-                """INSERT INTO edge
-                       (fact_id, subject, predicate, object, valid_from, valid_to,
-                        tx_from, tx_to, confidence, source_episode, char_span_lo, char_span_hi,
-                        subject_id, alive, embedding)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::vector)""",
-                (
-                    e.fact_id, e.subject, e.predicate, e.object, e.valid_from, e.valid_to,
-                    e.tx_from, e.tx_to, e.confidence, e.source_episode_id or None, lo, hi,
-                    e.subject_id, e.alive, _vec_literal(e.embedding),
-                ),
-            )
+        """Materialise entity + edge tables from the event log (rebuildable).
+
+        One transaction under the event-log lock: rebuilds (one per write, from
+        every process) serialise with appends and with each other instead of
+        colliding on primary keys, and each folds a log no append is midway
+        through. TRUNCATE keeps its table lock until commit, so a concurrent
+        search waits for the new projection rather than reading a half-built one.
+        """
+        with self._lock, self._conn.transaction():
+            self._conn.execute(_LOG_LOCK)
+            proj = self._projector.build(self.store.events())
+            self._conn.execute("TRUNCATE entity, edge")
+            with self._conn.cursor() as cur:
+                cur.executemany(
+                    "INSERT INTO entity (canonical_id, aliases) VALUES (%s, %s)",
+                    [(ent.canonical_id, list(ent.aliases)) for ent in proj.entities.values()],
+                )
+                cur.executemany(
+                    """INSERT INTO edge
+                           (fact_id, subject, predicate, object, valid_from, valid_to,
+                            tx_from, tx_to, confidence, source_episode, char_span_lo, char_span_hi,
+                            subject_id, alive, embedding)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::vector)""",
+                    [
+                        (
+                            e.fact_id, e.subject, e.predicate, e.object, e.valid_from, e.valid_to,
+                            e.tx_from, e.tx_to, e.confidence, e.source_episode_id or None,
+                            e.char_span[0] if e.char_span else None,
+                            e.char_span[1] if e.char_span else None,
+                            e.subject_id, e.alive, _vec_literal(e.embedding),
+                        )
+                        for e in proj.edges.values()
+                    ],
+                )
 
     def search(
         self,
@@ -543,7 +594,8 @@ class PostgresProjectionBackend:
             ORDER BY score DESC, tx_from ASC, fact_id
             LIMIT %(limit)s
         """
-        rows = self._conn.execute(sql, params).fetchall()
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
         results: list[SearchResult] = []
         for row in rows:
             edge = Edge(

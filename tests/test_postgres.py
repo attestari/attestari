@@ -125,6 +125,85 @@ def test_postgres_evidence_bundle_lists_the_certificate_register() -> None:
     assert certs[0]["facts_deleted"] >= 2
 
 
+def test_postgres_concurrent_writers_serialise_their_rebuilds() -> None:
+    """Separate engines writing at once (what `uvicorn --workers N` runs) each
+    rebuild the projection after every write. Rebuilds serialise under the
+    event-log lock, so none collides on a primary key, and a search running
+    alongside never sees a half-built table."""
+    import threading
+
+    from attestari import PostgresEventStore
+
+    _reset()
+    Memory.postgres(DSN).add("I live in Berlin.", subject_id="seed")
+    errors: list[str] = []
+    empty_searches = 0
+
+    def write(k: int) -> None:
+        mem = Memory.postgres(DSN)
+        for i in range(6):
+            try:
+                mem.add(f"I live in Delhi. I work at Acme{k}x{i}.", subject_id=f"w{k}-{i}")
+            except Exception as e:  # noqa: BLE001 - report every failure, not the first
+                errors.append(repr(e))
+
+    def search(stop: threading.Event) -> None:
+        nonlocal empty_searches
+        mem = Memory.postgres(DSN)
+        while not stop.is_set():
+            if not mem.search("Berlin", subject_id="seed"):
+                empty_searches += 1
+
+    stop = threading.Event()
+    reader = threading.Thread(target=search, args=(stop,))
+    writers = [threading.Thread(target=write, args=(k,)) for k in range(4)]
+    reader.start()
+    for t in writers:
+        t.start()
+    for t in writers:
+        t.join()
+    stop.set()
+    reader.join()
+
+    assert errors == []
+    assert empty_searches == 0
+    store = PostgresEventStore(DSN)
+    asserted = store._conn.execute(
+        "SELECT count(*) AS n FROM fact_event WHERE op = 'asserted'"
+    ).fetchone()["n"]
+    edges = store._conn.execute("SELECT count(*) AS n FROM edge").fetchone()["n"]
+    store.close()
+    assert asserted == edges == 1 + 4 * 6 * 2  # every fact materialised exactly once
+
+
+def test_postgres_memory_is_safe_to_share_across_threads() -> None:
+    """One engine serving a thread pool, as FastAPI runs sync handlers: each
+    thread's transaction holds the shared connection, so no thread's statements
+    run inside (or abort) another thread's transaction."""
+    import threading
+
+    _reset()
+    mem = Memory.postgres(DSN)
+    errors: list[str] = []
+
+    def write(k: int) -> None:
+        for i in range(5):
+            try:
+                mem.add(f"I live in Paris. I work at Corp{k}x{i}.", subject_id=f"t{k}-{i}")
+            except Exception as e:  # noqa: BLE001 - report every failure, not the first
+                errors.append(repr(e))
+
+    threads = [threading.Thread(target=write, args=(k,)) for k in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    assert len(mem.timeline()) == 4 * 5 * 2
+    assert mem.verify_audit(deep=True).ok  # concurrent appends left one unbroken chain
+
+
 def test_initdb_is_packaged_and_idempotent() -> None:
     """The schema ships inside the package (pip-only users need no clone), and
     applying it to an already-initialised database is a no-op, not an error."""
