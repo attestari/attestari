@@ -353,11 +353,12 @@ def create_app(memory: Memory | None = None) -> FastAPI:
     def audit_verify(deep: bool = False) -> dict[str, Any]:
         """Walk the hash-linked audit chain over the event log. Any reorder,
         insertion, or deletion of history breaks a link and is reported at the
-        exact `broken_at` seq. Verification uses content digests only — no PII —
-        so it still passes after a subject is crypto-shredded.
+        exact `broken_at` seq. Verification uses the chain's commitments only,
+        never content, so it still passes after a subject is crypto-shredded.
 
         `deep=true` additionally re-derives every stored event's digest and
-        re-hashes episode payloads against their `content_hash`, catching
+        re-checks episode payloads and encrypted fact objects against their
+        stored commitments, catching
         **silent in-place edits to event content** — not just ledger tampering.
         Deep verification survives sanctioned crypto-shreds and flags a rogue
         key deletion at its exact seq.

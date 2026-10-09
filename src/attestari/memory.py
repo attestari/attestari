@@ -121,6 +121,7 @@ class Memory:
         # to this form on read, so ids round-trip byte-identically — required
         # for the audit digests (which commit ids) to re-derive exactly.
         episode_id = str(uuid.uuid4())
+        # A store that encrypts replaces content_hash with a keyed commitment.
         self.store.append(
             EpisodeIngested(
                 episode_id=episode_id,
@@ -362,18 +363,23 @@ class Memory:
 
         `deep=True` also cross-checks that each stored event's content still
         matches the digest committed to the chain (every semantic field,
-        including provenance spans and scope) and re-hashes each readable
-        episode payload against its `content_hash` — catching silent in-place
-        edits, not just ledger tampering. Deep verification **survives
-        sanctioned crypto-shreds**: entries whose events were erased with a
-        destroyed key *and* a `SubjectForgotten` tombstone are skipped, while a
-        destroyed key without a tombstone (a rogue shred) fails at that seq.
-        The default (chain-only) needs no event content at all.
+        including provenance spans and scope) and re-checks each readable
+        episode payload and sealed fact object against its commitment —
+        catching silent in-place edits, not just ledger tampering. Deep
+        verification **survives sanctioned crypto-shreds**: entries whose
+        events were erased with a destroyed key *and* a `SubjectForgotten`
+        tombstone are skipped, while a destroyed key without a tombstone (a
+        rogue shred) fails at that seq. The default (chain-only) needs no event
+        content at all.
         """
         if deep:
             erased_fn = getattr(self.store, "erased_refs", None)
             erased = erased_fn() if callable(erased_fn) else frozenset()
-            return verify(self.store.events(), self.store.audit_entries(), erased=erased)
+            keys_fn = getattr(self.store, "commit_keys", None)
+            keys = keys_fn() if callable(keys_fn) else {}
+            return verify(
+                self.store.events(), self.store.audit_entries(), erased=erased, commit_keys=keys
+            )
         return verify_entries(self.store.audit_entries())
 
     # --- internals ------------------------------------------------------ #

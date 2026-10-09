@@ -185,6 +185,10 @@ class SQLiteEventStore:
         """Destroy the subject's DEK — their ciphertext becomes unrecoverable."""
         self._keys.shred(subject_id)
 
+    def commit_keys(self) -> dict[str, bytes]:
+        """Commitment keys of the subjects whose DEK is intact (deep verify)."""
+        return self._keys.commit_keys()
+
     def erased_refs(self) -> set[str]:
         """Ids of episodes/facts whose content was **sanctioned-erased**: the
         subject's DEK is destroyed AND a `SubjectForgotten` tombstone is on the
@@ -214,29 +218,18 @@ class SQLiteEventStore:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
-                # Encrypt inside the transaction so a freshly-minted DEK commits
-                # atomically with the event it protects.
-                stored = event
-                if self.cipher.enabled:
-                    if isinstance(event, EpisodeIngested) and event.scope.subject_id:
-                        stored = dataclasses.replace(
-                            event,
-                            payload=self._keys.encrypt_for(event.scope.subject_id, event.payload),
-                        )
-                    elif isinstance(event, FactAsserted) and event.scope.subject_id:
-                        stored = dataclasses.replace(
-                            event,
-                            object=self._keys.encrypt_for(event.scope.subject_id, event.object),
-                        )
+                # Seal inside the transaction so a freshly-minted DEK commits
+                # atomically with the event it protects (KeyManager.seal).
+                committed, stored = self._keys.seal(event)
 
                 row = self._conn.execute(
                     "SELECT seq, entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
                 ).fetchone()
                 prev = row["entry_hash"] if row else GENESIS
                 # Chain extension from the shared helper (digest of the
-                # *plaintext* event); seq stamps the event row too, so events()
+                # committed event); seq stamps the event row too, so events()
                 # reads back in exactly the chained order.
-                entry = next_entry(prev, (row["seq"] + 1) if row else 1, event)
+                entry = next_entry(prev, (row["seq"] + 1) if row else 1, committed)
                 self._conn.execute(
                     "INSERT INTO event (seq, kind, payload) VALUES (?, ?, ?)",
                     (entry.seq, event.op, _encode(stored)),

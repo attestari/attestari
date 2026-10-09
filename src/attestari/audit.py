@@ -4,26 +4,36 @@ Every appended event also appends an `AuditEntry` whose `entry_hash` chains to t
 previous one: `entry_hash = H(prev_hash || payload_hash)`. Editing, inserting, or
 deleting any past event breaks the chain and is detected by `verify_entries`.
 
-The chain hashes **content digests, not raw content** — `payload_hash` for an
-episode uses its `content_hash`, and a fact's object is hashed, never stored raw.
-So the audit table holds no PII, and crypto-shredding a subject's content does
-**not** break the chain: verification uses the stored hashes only.
+The chain commits to content through **commitments, never raw content**: an
+episode through its `content_hash`, a fact's object through its `object_hash`
+or a sha256 of the object. When the content is encrypted (a KEK is set and the
+event has a subject), both commitments are keyed: HMAC-SHA256 under a key
+derived from the subject's DEK (`crypto.KeyManager.seal`). Shredding the DEK
+destroys that key, so a retained commitment can't be tested against a guessed
+value. An unkeyed sha256 commitment (no KEK, or an entry written before keyed
+commitments) can be: anyone holding the log can confirm a guess. Either way,
+crypto-shredding does **not** break the chain, because verification uses the
+stored commitments only. An event's other fields (subject, predicate, scope
+ids, timestamps, spans) are committed as they are and stay readable in the log.
 
-`digest(event)` commits **every semantic field** of an event (free-text/PII
-fields as sub-hashes, timestamps as epoch-microseconds so the commitment is
+`digest(event)` commits **every semantic field** of an event (free-text fields
+as commitments, timestamps as epoch-microseconds so the commitment is
 timezone- and storage-independent). Deep verification (`verify`) re-derives each
-stored event's digest, re-checks each readable episode payload against its
-`content_hash`, and aligns entries to events so a **sanctioned crypto-shred**
-(key destroyed *and* `SubjectForgotten` tombstone present) is skipped while a
-rogue key deletion (no tombstone) fails at the exact seq.
+stored event's digest, re-checks each readable episode payload and sealed fact
+object against its commitment, and aligns entries to events so a **sanctioned
+crypto-shred** (key destroyed *and* `SubjectForgotten` tombstone present) is
+skipped while a rogue key deletion (no tombstone) fails at the exact seq.
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 
+from .crypto import COMMIT_PREFIX, keyed_commitment
 from .events import (
     EntityMerged,
     EntityUnmerged,
@@ -76,10 +86,11 @@ def digest(event: Event) -> tuple[str, str, str]:
 
     Commits every semantic field, so an in-place edit of *any* of them —
     including provenance spans, confidence, validity windows, and scope — is
-    caught by deep verification. Free-text/PII fields (`object`, `payload` via
-    `content_hash`, `source_ref`, `evidence`) enter as sub-hashes, so the
-    preimage itself carries no raw PII. Floats are committed at 6 decimals
-    (coarser than a float4 round-trip error); timestamps as epoch-µs.
+    caught by deep verification. Free-text fields enter as commitments, never
+    raw: `payload` via `content_hash`, `object` via `object_hash` when sealed
+    (else its sha256), and `source_ref` and `evidence` as sha256. Floats are
+    committed at 6 decimals (coarser than a float4 round-trip error);
+    timestamps as epoch-µs.
     """
     if isinstance(event, EpisodeIngested):
         return (
@@ -90,7 +101,7 @@ def digest(event: Event) -> tuple[str, str, str]:
                     [
                         "episode",
                         event.episode_id,
-                        event.content_hash,  # commits the payload (sha256 of it)
+                        event.content_hash,  # commits the payload (sha256, or keyed)
                         _h(event.source_ref or ""),
                         _scope_s(event.scope),
                         _ts(event.ingested_at),
@@ -110,7 +121,7 @@ def digest(event: Event) -> tuple[str, str, str]:
                         event.fact_id,
                         event.subject,
                         event.predicate,
-                        _h(event.object),  # hash PII, never store raw
+                        event.object_hash or _h(event.object),  # never the raw object
                         _ts(event.valid_from),
                         _ts(event.valid_to) if event.valid_to else "",
                         f"{event.confidence:.6f}",
@@ -211,11 +222,30 @@ def verify_entries(entries: list[AuditEntry]) -> AuditReport:
     return AuditReport(ok=True, entries=len(entries), head=prev)
 
 
+def _commitment_holds(
+    commitment: str, text: str, subject_id: str | None, keys: Mapping[str, bytes]
+) -> bool:
+    if commitment.startswith(COMMIT_PREFIX):
+        key = keys.get(subject_id) if subject_id else None
+        return key is not None and hmac.compare_digest(keyed_commitment(key, text), commitment)
+    return _h(text) == commitment
+
+
+def _content_matches(ev: Event, keys: Mapping[str, bytes]) -> bool:
+    """Does a readable event's content still match its stored commitment?"""
+    if isinstance(ev, EpisodeIngested):
+        return _commitment_holds(ev.content_hash, ev.payload, ev.scope.subject_id, keys)
+    if isinstance(ev, FactAsserted) and ev.object_hash is not None:
+        return _commitment_holds(ev.object_hash, ev.object, ev.scope.subject_id, keys)
+    return True  # an unsealed fact's object is hashed inside its digest
+
+
 def verify(
     events: list[Event],
     entries: list[AuditEntry],
     *,
     erased: frozenset[str] | set[str] = frozenset(),
+    commit_keys: Mapping[str, bytes] | None = None,
 ) -> AuditReport:
     """Full verification: the chain links **and** that each stored event still
     matches the content digest committed to the chain.
@@ -226,9 +256,12 @@ def verify(
     order and aligns them against the readable events:
 
     - a matching event (same kind, ref, and re-derived `payload_hash`) consumes
-      the entry — and for episodes the payload is additionally re-hashed against
-      `content_hash`, so an in-place payload edit that kept the stored
-      `content_hash` is caught too;
+      the entry, and its content is checked against its stored commitment (an
+      episode's payload against `content_hash`, a sealed fact's object against
+      `object_hash`), so an in-place content edit that kept the commitment is
+      caught too. Keyed commitments are re-derived with the subject's key from
+      `commit_keys` (subject_id -> commitment key); one whose key is missing
+      fails;
     - an entry whose `ref` is in `erased` — a **sanctioned crypto-shred** (the
       store vouches: key destroyed *and* `SubjectForgotten` tombstone present) —
       is skipped: the content is gone by design, the commitment stands;
@@ -244,14 +277,15 @@ def verify(
     if not report.ok:
         return report
 
+    keys = commit_keys or {}
     idx = 0
     for e in entries:
         ev = events[idx] if idx < len(events) else None
         if ev is not None:
             kind, ref, payload_hash = digest(ev)
             if kind == e.kind and ref == e.ref and payload_hash == e.payload_hash:
-                if isinstance(ev, EpisodeIngested) and _h(ev.payload) != ev.content_hash:
-                    # Payload edited in place with the stored content_hash kept.
+                if not _content_matches(ev, keys):
+                    # Content edited in place with its stored commitment kept.
                     return AuditReport(
                         ok=False, entries=len(entries), head=report.head, broken_at=e.seq
                     )

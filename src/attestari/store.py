@@ -63,6 +63,10 @@ class InMemoryEventStore:
         """Destroy the subject's DEK — their ciphertext becomes unrecoverable."""
         self._keys.shred(subject_id)
 
+    def commit_keys(self) -> dict[str, bytes]:
+        """Commitment keys of the subjects whose DEK is intact (deep verify)."""
+        return self._keys.commit_keys()
+
     def erased_refs(self) -> set[str]:
         """Ids of episodes/facts whose content was **sanctioned-erased**: the
         subject's DEK is destroyed AND a `SubjectForgotten` tombstone is on the
@@ -84,25 +88,17 @@ class InMemoryEventStore:
     # --- write path ----------------------------------------------------- #
 
     def append(self, event: Event) -> None:
-        # Persist ciphertext for PII when encryption is on; the audit chain still
-        # commits to the *plaintext* digest (so verification is content-faithful
-        # and survives a later shred).
-        stored = event
-        if self.cipher.enabled:
-            if isinstance(event, EpisodeIngested) and event.scope.subject_id:
-                stored = dataclasses.replace(
-                    event, payload=self._keys.encrypt_for(event.scope.subject_id, event.payload)
-                )
-            elif isinstance(event, FactAsserted) and event.scope.subject_id:
-                stored = dataclasses.replace(
-                    event, object=self._keys.encrypt_for(event.scope.subject_id, event.object)
-                )
+        # Persist ciphertext for PII when encryption is on; the audit chain
+        # commits to the plaintext through keyed commitments (so verification is
+        # content-faithful, survives a later shred, and can't confirm guesses
+        # after one). See KeyManager.seal.
+        committed, stored = self._keys.seal(event)
         self._log.append(stored)
 
-        # Chain the plaintext event's digest (see audit.next_entry — shared with
+        # Chain the committed event's digest (see audit.next_entry — shared with
         # the Postgres adapter, so the two chains cannot diverge).
         prev = self._audit[-1].entry_hash if self._audit else GENESIS
-        self._audit.append(next_entry(prev, len(self._audit) + 1, event))
+        self._audit.append(next_entry(prev, len(self._audit) + 1, committed))
 
     def events(self) -> list[Event]:
         if not self.cipher.enabled:

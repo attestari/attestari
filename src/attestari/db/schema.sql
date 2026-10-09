@@ -25,7 +25,7 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;     -- trigram / keyword search fallback
 -- `forget` flow); `content_hash` makes provenance tamper-evident.
 CREATE TABLE IF NOT EXISTS episode (
     episode_id    UUID PRIMARY KEY,
-    content_hash  TEXT        NOT NULL,            -- sha256 of raw payload
+    content_hash  TEXT        NOT NULL,            -- sha256 of raw payload; 'k1:' HMAC when encrypted
     payload       TEXT,                            -- raw text (or NULL once crypto-shredded)
     source_ref    TEXT,                            -- where it came from (doc id, message id, ...)
     subject_id    TEXT,                            -- scope: the data subject (e.g. end user)
@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS fact_event (
     subject        TEXT,                           -- entity id (canonical or alias at assert time)
     predicate      TEXT,
     object         TEXT,
+    object_hash    TEXT,                           -- 'k1:' HMAC of the object when encrypted (else NULL)
     confidence     REAL,
     valid_from     TIMESTAMPTZ,                    -- VALID time: true-in-world start
     valid_to       TIMESTAMPTZ,                    -- VALID time: true-in-world end (NULL = still true)
@@ -73,6 +74,12 @@ ALTER TABLE episode    ADD COLUMN IF NOT EXISTS event_seq BIGINT;
 ALTER TABLE fact_event ADD COLUMN IF NOT EXISTS event_seq BIGINT;
 CREATE INDEX IF NOT EXISTS episode_event_seq_idx    ON episode (event_seq);
 CREATE INDEX IF NOT EXISTS fact_event_event_seq_idx ON fact_event (event_seq);
+
+-- Idempotent migration for databases created before keyed commitments: an
+-- encrypted fact's object is committed to the audit chain as a keyed HMAC under
+-- a key destroyed with the subject's DEK, so a shredded value can't be confirmed
+-- by hashing guesses. NULL (older rows, unencrypted facts) = sha256 of the object.
+ALTER TABLE fact_event ADD COLUMN IF NOT EXISTS object_hash TEXT;
 
 -- Deletion certificates: the proof retained AFTER a subject's data is destroyed.
 -- We keep the certificate (that erasure happened, by whom, how much) and shred

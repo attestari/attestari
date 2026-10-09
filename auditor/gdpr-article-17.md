@@ -29,7 +29,11 @@ soft-delete a row (the data is still there), or scrub every replica and backup
    encryption). `attestari.crypto.verify_certificate` recomputes it, so a forged
    certificate, or a genuine one with any field altered, fails verification.
 5. The audit chain still verifies, because it commits to content *digests*
-   rather than content. The proof of the erasure survives the erasure.
+   rather than content. The proof of the erasure survives the erasure. With
+   encryption on, the digests of the erased content are keyed under a key
+   derived from the subject's data key and destroyed with it, so they can't be
+   used to test a guess such as a city name. Entries written by attestari 0.0.6
+   or earlier used plain SHA-256 and can be.
 
 Verify an individual erasure at any time:
 

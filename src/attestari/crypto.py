@@ -27,6 +27,7 @@ import os
 import secrets
 from typing import Protocol
 
+from .events import EpisodeIngested, Event, FactAsserted
 from .records import DeletionCertificate
 
 _NONCE = 12  # AES-GCM nonce length
@@ -35,6 +36,23 @@ _NONCE = 12  # AES-GCM nonce length
 # signature can never be confused with (or replayed as) any other KEK use.
 _CERT_SIGNING_INFO = b"attestari/certificate-signing/v1"
 CERT_ALGORITHM = "hmac-sha256-kek-v1"
+
+# Domain separation for the per-subject commitment key derived from a DEK. A
+# keyed commitment ("k1:" + HMAC-SHA256) dies with the DEK: once the subject is
+# shredded, a retained commitment can't be tested against a guessed value, which
+# an unkeyed sha256 of a city or an employer can.
+_COMMIT_INFO = b"attestari/commit/v1"
+COMMIT_PREFIX = "k1:"
+
+
+def commitment_key(dek: bytes) -> bytes:
+    """The subject's commitment key: derived from, and destroyed with, its DEK."""
+    return hmac.new(dek, _COMMIT_INFO, hashlib.sha256).digest()
+
+
+def keyed_commitment(key: bytes, text: str) -> str:
+    """`k1:` + HMAC-SHA256 of `text` under a subject's commitment key."""
+    return COMMIT_PREFIX + hmac.new(key, text.encode(), hashlib.sha256).hexdigest()
 
 
 class NullCipher:
@@ -193,6 +211,37 @@ class KeyManager:
     def encrypt_for(self, subject_id: str, text: str) -> str:
         """Encrypt `text` under the subject's DEK (creating the DEK if new)."""
         return self.cipher.encrypt(self.dek_for(subject_id), text)
+
+    def commit(self, subject_id: str, text: str) -> str:
+        """Keyed commitment to `text` under the subject's commitment key."""
+        return keyed_commitment(commitment_key(self.dek_for(subject_id)), text)
+
+    def commit_keys(self) -> dict[str, bytes]:
+        """Commitment keys of every subject whose DEK is intact (deep verify)."""
+        return {sid: commitment_key(dek) for sid, dek in self.live_deks().items()}
+
+    def seal(self, event: Event) -> tuple[Event, Event]:
+        """`(committed, stored)` for an event about to be appended.
+
+        With encryption on and a subject in scope, the episode payload or fact
+        object gets a keyed commitment (`content_hash` / `object_hash`) and the
+        stored copy carries its ciphertext. The audit chain digests `committed`
+        and the store persists `stored`. Anything else, and every event in an
+        unencrypted deployment, passes through unchanged.
+        """
+        if not self.cipher.enabled:
+            return event, event
+        if isinstance(event, EpisodeIngested) and event.scope.subject_id:
+            sid = event.scope.subject_id
+            committed = dataclasses.replace(event, content_hash=self.commit(sid, event.payload))
+            stored = dataclasses.replace(committed, payload=self.encrypt_for(sid, event.payload))
+            return committed, stored
+        if isinstance(event, FactAsserted) and event.scope.subject_id:
+            sid = event.scope.subject_id
+            committed = dataclasses.replace(event, object_hash=self.commit(sid, event.object))
+            stored = dataclasses.replace(committed, object=self.encrypt_for(sid, event.object))
+            return committed, stored
+        return event, event
 
     def reset_cache(self) -> None:
         """Drop unwrapped-DEK cache (e.g. after a test truncate)."""

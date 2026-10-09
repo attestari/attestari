@@ -101,6 +101,7 @@ class PostgresEventStore:
         # run inside ours — so every use of the connection holds this lock,
         # and the projection backend shares it.
         self._lock = threading.RLock()
+        self._schema_current = False  # see _require_current_schema
         # Encryption is opt-in: EnvelopeCipher when ATTESTARI_KEK is set, else NullCipher.
         self.cipher = cipher or cipher_from_env()
         # Key lifecycle is delegated to the shared KeyManager; only the resting
@@ -112,6 +113,10 @@ class PostgresEventStore:
     def shred_subject(self, subject_id: str) -> None:
         """Destroy the subject's DEK — their ciphertext becomes unrecoverable."""
         self._keys.shred(subject_id)
+
+    def commit_keys(self) -> dict[str, bytes]:
+        """Commitment keys of the subjects whose DEK is intact (deep verify)."""
+        return self._keys.commit_keys()
 
     def erased_refs(self) -> set[str]:
         """Ids of episodes/facts whose content was **sanctioned-erased**: the
@@ -141,35 +146,63 @@ class PostgresEventStore:
 
     # --- write path ----------------------------------------------------- #
 
+    def _require_current_schema(self) -> None:
+        # Writes need the current schema; reads tolerate an older one, so an
+        # auditor can verify a log they can't migrate. Checked before anything
+        # is written, so an unmigrated database fails cleanly rather than
+        # midway through an add(); re-checked until found, so a migration
+        # applied while the process runs is picked up.
+        if self._schema_current:
+            return
+        self._schema_current = (
+            self._conn.execute(
+                """SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = current_schema()
+                     AND table_name = 'fact_event' AND column_name = 'object_hash'"""
+            ).fetchone()
+            is not None
+        )
+        if not self._schema_current:
+            raise RuntimeError(
+                "the Postgres schema is older than this version of attestari; apply it "
+                "again with `python -m attestari.initdb <dsn>` (it is idempotent)"
+            )
+
     def append(self, event: Event) -> None:
         # One transaction per append: the event row and its audit entry commit
         # atomically (a crash cannot leave the chain out of step with the log),
         # and an advisory xact lock serialises concurrent appenders so two
         # writers can never read the same prev_hash and fork the chain.
-        with self._lock, self._conn.transaction():
-            self._conn.execute(_LOG_LOCK)
-            row = self._conn.execute(
-                "SELECT seq, entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
-            ).fetchone()
-            prev = row["entry_hash"] if row else GENESIS
-            # The chain extension comes from audit.next_entry — shared with the
-            # in-memory adapter, so the two chains cannot diverge. The entry's
-            # seq is also stamped onto the event row (event_seq): one global
-            # append order across episode + fact_event, which events() reads
-            # back so deep verification sees the exact chained order.
-            entry = next_entry(prev, (row["seq"] + 1) if row else 1, event)
-            self._insert_event(event, entry.seq)
-            self._conn.execute(
-                """INSERT INTO audit_entry (seq, kind, ref, payload_hash, prev_hash, entry_hash)
-                   VALUES (%s, %s, %s, %s, %s, %s)""",
-                (entry.seq, entry.kind, entry.ref, entry.payload_hash, entry.prev_hash, entry.entry_hash),
-            )
+        with self._lock:
+            self._require_current_schema()
+            with self._conn.transaction():
+                self._conn.execute(_LOG_LOCK)
+                row = self._conn.execute(
+                    "SELECT seq, entry_hash FROM audit_entry ORDER BY seq DESC LIMIT 1"
+                ).fetchone()
+                prev = row["entry_hash"] if row else GENESIS
+                # Seal inside the transaction so a freshly minted DEK commits
+                # atomically with the event it protects (KeyManager.seal).
+                committed, stored = self._keys.seal(event)
+                # The chain extension comes from audit.next_entry — shared with
+                # the in-memory adapter, so the two chains cannot diverge. The
+                # entry's seq is also stamped onto the event row (event_seq): one
+                # global append order across episode + fact_event, which
+                # events() reads back so deep verification sees the exact
+                # chained order.
+                entry = next_entry(prev, (row["seq"] + 1) if row else 1, committed)
+                self._insert_event(stored, entry.seq)
+                self._conn.execute(
+                    """INSERT INTO audit_entry
+                           (seq, kind, ref, payload_hash, prev_hash, entry_hash)
+                       VALUES (%s, %s, %s, %s, %s, %s)""",
+                    (entry.seq, entry.kind, entry.ref, entry.payload_hash,
+                     entry.prev_hash, entry.entry_hash),
+                )
 
     def _insert_event(self, event: Event, event_seq: int) -> None:
+        # `event` arrives sealed: PII fields already ciphertext when encrypting.
         if isinstance(event, EpisodeIngested):
-            payload = event.payload
-            if self.cipher.enabled and event.scope.subject_id:
-                payload = self._keys.encrypt_for(event.scope.subject_id, payload)
             self._conn.execute(
                 """INSERT INTO episode
                        (episode_id, content_hash, payload, source_ref,
@@ -178,7 +211,7 @@ class PostgresEventStore:
                 (
                     event.episode_id,
                     event.content_hash,
-                    payload,
+                    event.payload,
                     event.source_ref,
                     event.scope.subject_id,
                     event.scope.agent_id,
@@ -190,20 +223,18 @@ class PostgresEventStore:
             )
         elif isinstance(event, FactAsserted):
             lo, hi = event.char_span if event.char_span else (None, None)
-            obj = event.object
-            if self.cipher.enabled and event.scope.subject_id:
-                obj = self._keys.encrypt_for(event.scope.subject_id, obj)
             self._conn.execute(
                 """INSERT INTO fact_event
-                       (op, fact_id, subject, predicate, object, confidence,
+                       (op, fact_id, subject, predicate, object, object_hash, confidence,
                         valid_from, valid_to, source_episode, char_span_lo, char_span_hi,
                         recorded_at, event_seq)
-                   VALUES ('asserted', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                   VALUES ('asserted', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
                     event.fact_id,
                     event.subject,
                     event.predicate,
-                    obj,
+                    event.object,
+                    event.object_hash,
                     event.confidence,
                     event.valid_from,
                     event.valid_to,
@@ -345,6 +376,8 @@ class PostgresEventStore:
                             char_span=_span(row["char_span_lo"], row["char_span_hi"]),
                             scope=scope_by_episode.get(src, Scope()),
                             recorded_at=row["recorded_at"],
+                            # .get: read-only use still works on an unmigrated schema
+                            object_hash=row.get("object_hash"),
                         ),
                     )
                 )

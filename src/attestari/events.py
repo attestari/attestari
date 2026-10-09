@@ -30,8 +30,10 @@ class Scope:
 @dataclass(frozen=True, slots=True)
 class EpisodeIngested:
     """Raw ingested material. Every derived fact traces back to one episode.
-    `content_hash` makes provenance tamper-evident; `payload` is the raw text
-    (in production this is encrypted with a per-subject key)."""
+    `content_hash` makes provenance tamper-evident: the sha256 of the payload,
+    or, when the payload is encrypted, a keyed `k1:` commitment that is
+    destroyed with the subject's key. `payload` is the raw text (encrypted at
+    rest under a per-subject key when a KEK is set)."""
 
     episode_id: str
     content_hash: str
@@ -47,7 +49,9 @@ class FactAsserted:
     """A (subject, predicate, object) triple believed true from `valid_from`.
 
     `valid_*` is VALID time (true-in-world); `recorded_at` is SYSTEM time (when
-    Attestari learned it). `source_episode_id` + `char_span` are the provenance."""
+    Attestari learned it). `source_episode_id` + `char_span` are the provenance.
+    `object_hash` is the object's keyed `k1:` commitment when the object is
+    encrypted (set by the store); otherwise None and the chain hashes the object."""
 
     fact_id: str
     subject: str
@@ -60,6 +64,7 @@ class FactAsserted:
     char_span: tuple[int, int] | None = None
     scope: Scope = field(default_factory=Scope)
     recorded_at: datetime = field(default_factory=utcnow)
+    object_hash: str | None = None
     op: str = "fact_asserted"
 
 

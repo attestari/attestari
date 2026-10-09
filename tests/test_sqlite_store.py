@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from attestari import HashEmbedder, Memory, SQLiteEventStore
+from attestari.crypto import NullCipher
 from attestari.events import (
     EntityMerged,
     EntityUnmerged,
@@ -62,7 +63,9 @@ def _all_event_types() -> list:
 
 
 def test_round_trip_fidelity_all_event_types(tmp_path: Path) -> None:
-    store = SQLiteEventStore(tmp_path / "n.db")
+    # Unencrypted, so every field comes back as appended. (With a KEK the store
+    # replaces content_hash and object_hash with keyed commitments by design.)
+    store = SQLiteEventStore(tmp_path / "n.db", cipher=NullCipher())
     originals = _all_event_types()
     for ev in originals:
         store.append(ev)

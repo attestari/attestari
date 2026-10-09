@@ -169,3 +169,36 @@ def test_postgres_deep_verify_survives_shred(monkeypatch: pytest.MonkeyPatch) ->
     deep = mem.verify_audit(deep=True)
     assert deep.ok, f"deep verify must survive a sanctioned crypto-shred on Postgres: {deep}"
     _pg_reset()
+
+
+@pg
+def test_postgres_keyed_commitments(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Encrypted content is committed with keyed hashes (k1:), which deep
+    verification re-derives, so an encrypted object rewritten in place under
+    the subject's own key is caught."""
+    pytest.importorskip("cryptography")
+    from attestari.crypto import COMMIT_PREFIX, generate_kek
+
+    monkeypatch.setenv("ATTESTARI_KEK", generate_kek())
+    _pg_reset()
+    mem = Memory.postgres(DSN)
+    mem.add("Hi, I'm Dana. I live in Berlin.", subject_id="u1")
+    mem.add("I'm Ravi. I live in Chennai.", subject_id="u2")
+    conn = mem.store._conn
+    episodes = conn.execute("SELECT content_hash FROM episode").fetchall()
+    facts = conn.execute("SELECT object_hash FROM fact_event WHERE op = 'asserted'").fetchall()
+    assert episodes and all(r["content_hash"].startswith(COMMIT_PREFIX) for r in episodes)
+    assert facts and all(r["object_hash"].startswith(COMMIT_PREFIX) for r in facts)
+
+    mem.forget("u1")
+    assert mem.verify_audit(deep=True).ok
+
+    conn.execute(
+        """UPDATE fact_event SET object = %s
+           WHERE op = 'asserted' AND predicate = 'lives_in'
+             AND source_episode IN (SELECT episode_id FROM episode WHERE subject_id = 'u2')""",
+        (mem.store._keys.encrypt_for("u2", "Pyongyang"),),
+    )
+    assert mem.verify_audit().ok  # ledger untouched
+    assert not mem.verify_audit(deep=True).ok
+    _pg_reset()

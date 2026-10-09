@@ -31,8 +31,13 @@ delete a ledger entry      chain ok=False (linkage breaks)
 
 **Why it holds.** Every event appends an `AuditEntry` whose
 `entry_hash = H(prev_hash ‖ payload_hash)`, chaining to the one before it, where
-`payload_hash` is a digest of the event's content (PII is hashed, never stored
-raw — so the chain itself holds no personal data). Two independent checks:
+`payload_hash` is a digest of the event's content. Message text and fact values
+enter it as commitments, never raw. With encryption on, those commitments are
+keyed (HMAC under a key derived from the subject's DEK and destroyed with it),
+so after a shred they can't be used to confirm a guessed value. Entries written
+by 0.0.6 or earlier used plain SHA-256 and can be. The event's other fields
+(subject, predicate, timestamps, spans) stay readable in the log. Two
+independent checks:
 
 - `verify_audit()` walks the links — catches any reorder, insert, or delete of the
   ledger.
